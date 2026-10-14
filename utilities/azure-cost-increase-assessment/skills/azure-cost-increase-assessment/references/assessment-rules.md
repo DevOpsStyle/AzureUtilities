@@ -47,6 +47,7 @@ Do not stack the 25% v1/v2 increase with a regional increase.
 In affected regions, include:
 
 - `microsoft.compute/disks`
+- `microsoft.compute/snapshots`
 - `microsoft.storage/storageaccounts`
 - `microsoft.netapp/netappaccounts/capacitypools`
 - `microsoft.elasticsan/elasticsans`
@@ -71,6 +72,8 @@ Exclude on-demand cost rows whose meter subcategory contains, case-insensitively
 These patterns also exclude names with a `v2` suffix. Exclude meter subcategories beginning with `Blob Storage` only when the user explicitly enables the assumed legacy Blob Storage exclusions.
 
 ## Cost Management aggregation
+
+Filter Cost Management data to the `Virtual Machines` and `Storage` meter categories. Ignore other charges associated with the same resource ID, such as Microsoft Defender.
 
 For each lowercase resource ID, aggregate:
 
@@ -98,10 +101,13 @@ Choose one source in this order:
 2. Otherwise, if amortized cost is positive and Reserved Instance share is at least 99.9%:
    - `CostSource = Cost Management (fully covered by RI)`
    - `BaseMonthlyCost = 0`
-3. Otherwise, if a supported retail list price was found:
+3. Otherwise, if on-demand cost is positive and subject on-demand cost is zero:
+   - `CostSource = Cost Management (excluded meters only)`
+   - `BaseMonthlyCost = 0`
+4. Otherwise, if a supported retail list price was found:
    - `CostSource = Retail list price (<currency>)`
    - `BaseMonthlyCost = ListPriceMonthly`
-4. Otherwise:
+5. Otherwise:
    - `CostSource = None`
    - leave `BaseMonthlyCost` and increase values empty
 
@@ -130,13 +136,14 @@ Use the Azure Retail Prices API only when no billed usage is available.
 - For Premium SSD v2, calculate capacity plus IOPS above 3,000 plus throughput above 125 MBps, multiplied by 730 hours.
 - For Ultra Disk, calculate capacity plus IOPS plus throughput, multiplied by 730 hours. The vCPU reservation charge is not included.
 
-Do not use a list-price fallback for Storage Accounts, Azure NetApp Files, or Elastic SAN because their costs are usage-based.
+Do not use a list-price fallback for disk snapshots, Storage Accounts, Azure NetApp Files, or Elastic SAN because their costs are usage-based.
 
 ## Limitations
 
 - Past consumption is treated as the forecast; growth, decommissioning, and autoscale changes are not projected.
 - Cost Management data can lag by 24 to 48 hours.
 - Spot usage is not included in the billed baseline.
-- Disk snapshots, Dedicated Hosts, Azure Batch pools, Azure Backup, Azure VMware Solution, and PaaS compute are outside scope.
+- Reservation expiry dates are not read; manually verify reservations that expire before 1 February 2027.
+- Dedicated Hosts, Azure Batch pools, Azure File Sync, Azure Backup, Azure VMware Solution, and PaaS compute are outside scope.
 - Storage estimates depend on the billed meter mix.
 - If the Retail Prices API starts returning prices already effective on or after 1 February 2027, applying the increase again can double count. Flag such rows for manual review.

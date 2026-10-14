@@ -38,6 +38,17 @@ Resources
 | project subscriptionId, resourceGroup, name, type, location, diskSku = tostring(sku.name), diskSizeGB = toint(properties.diskSizeGB), diskTier = tostring(properties.tier), diskState = tostring(properties.diskState), diskIops = tolong(properties.diskIOPSReadWrite), diskMbps = tolong(properties.diskMBpsReadWrite), regionalPct, id
 ```
 
+### Disk snapshots
+
+```kusto
+Resources
+| where type =~ "microsoft.compute/snapshots"
+| extend region = tolower(location)
+| extend regionalPct = case(region == "northeurope", 17, region in ("francecentral", "francesouth"), 11, region in ("westeurope", "norwayeast", "norwaywest"), 9, region == "southeastasia", 8, 0)
+| where regionalPct > 0
+| project subscriptionId, resourceGroup, name, type, location, snapSku = tostring(sku.name), diskSizeGB = toint(properties.diskSizeGB), incremental = tobool(properties.incremental), regionalPct, id
+```
+
 ### Storage accounts, Azure NetApp Files, and Elastic SAN
 
 ```kusto
@@ -46,8 +57,8 @@ Resources
 | extend region = tolower(location)
 | extend regionalPct = case(region == "northeurope", 17, region in ("francecentral", "francesouth"), 11, region in ("westeurope", "norwayeast", "norwaywest"), 9, region == "southeastasia", 8, 0)
 | where regionalPct > 0
-| extend skuName = tostring(sku.name), isHns = tobool(properties.isHnsEnabled)
-| project subscriptionId, resourceGroup, name, type, location, kind, skuName, isHns, regionalPct, id
+| extend skuName = tostring(sku.name)
+| project subscriptionId, resourceGroup, name, type, location, kind, skuName, regionalPct, id
 ```
 
 When the user supplies a narrower scope, add subscription or resource-group filters without changing the classification expressions.
@@ -93,13 +104,27 @@ Replace `<FROM>` and `<TO>` with ISO dates.
       }
     ],
     "filter": {
-      "dimensions": {
-        "name": "PricingModel",
-        "operator": "In",
-        "values": [
-          "OnDemand"
-        ]
-      }
+      "and": [
+        {
+          "dimensions": {
+            "name": "MeterCategory",
+            "operator": "In",
+            "values": [
+              "Virtual Machines",
+              "Storage"
+            ]
+          }
+        },
+        {
+          "dimensions": {
+            "name": "PricingModel",
+            "operator": "In",
+            "values": [
+              "OnDemand"
+            ]
+          }
+        }
+      ]
     }
   }
 }
@@ -132,7 +157,17 @@ Replace `<FROM>` and `<TO>` with ISO dates.
         "type": "Dimension",
         "name": "PricingModel"
       }
-    ]
+    ],
+    "filter": {
+      "dimensions": {
+        "name": "MeterCategory",
+        "operator": "In",
+        "values": [
+          "Virtual Machines",
+          "Storage"
+        ]
+      }
+    }
   }
 }
 ```

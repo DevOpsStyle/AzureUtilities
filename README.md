@@ -8,7 +8,7 @@ A growing collection of practical, reusable utilities for assessing, operating, 
 
 | Utility | Purpose | Azure SRE Agent | Download |
 |---|---|---|---|
-| [Azure Cost Increase Assessment](./utilities/azure-cost-increase-assessment/) | Inventories affected Azure compute and storage resources and estimates the monthly and annual impact of the price changes effective 1 February 2027. | [Install-from-URL instructions](./utilities/azure-cost-increase-assessment/#azure-sre-agent-plugin) | [Download ZIP](./downloads/Azure-Cost-Increase-Assessment-v5.zip) |
+| [Azure Cost Increase Assessment](./utilities/azure-cost-increase-assessment/) | Inventories affected Azure compute and storage resources and estimates the monthly and annual impact of the price changes effective 1 February 2027. | [Install-from-URL instructions](./utilities/azure-cost-increase-assessment/#azure-sre-agent-plugin) | [Download ZIP](./downloads/Azure-Cost-Increase-Assessment-v6.zip) |
 
 ## Quick start
 
@@ -19,7 +19,7 @@ Set-Location .\AzureUtilities\utilities\azure-cost-increase-assessment
 Install-Module Az.Accounts, Az.ResourceGraph -Scope CurrentUser
 Connect-AzAccount -Tenant <tenant-id-or-domain>
 
-.\CostIncrease_Assessment_v5.ps1 -CostMonths 3 -OutFile .\price_increase_impact.csv
+.\CostIncrease_Assessment_v6.ps1 -Currency EUR -CostMonths 3 -OutFile .\price_increase_impact.csv
 ```
 
 See the [utility documentation](./utilities/azure-cost-increase-assessment/README.md) for permissions, parameters, calculation details, Azure Resource Graph queries, caveats, and the animated demo.
@@ -30,10 +30,10 @@ See the [utility documentation](./utilities/azure-cost-increase-assessment/READM
 AzureUtilities/
 |-- README.md
 |-- downloads/
-|   `-- Azure-Cost-Increase-Assessment-v5.zip
+|   `-- Azure-Cost-Increase-Assessment-v6.zip
 `-- utilities/
     `-- azure-cost-increase-assessment/
-        |-- CostIncrease_Assessment_v5.ps1
+        |-- CostIncrease_Assessment_v6.ps1
         |-- plugin.json
         |-- README.md
         |-- media/

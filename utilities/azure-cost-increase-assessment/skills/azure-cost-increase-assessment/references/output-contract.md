@@ -24,13 +24,17 @@ Include at least the top 10 rows when available. Highlight:
 - list-price fallback
 - partial or full Reserved Instance coverage
 - Savings Plan coverage
+- excluded-meter-only rows
 - deallocated VMs
 - unattached disks
+- incremental disk snapshots
 - missing billed or retail price data
 
 ## CSV
 
 When file generation is available, create `azure_price_increase_impact.csv` in UTF-8 with these columns:
+
+`Category` can be `Virtual Machine`, `Managed Disk`, `Disk Snapshot`, `Storage Account`, `Azure NetApp Files`, or `Elastic SAN`.
 
 ```text
 Category
@@ -80,6 +84,7 @@ Report counts for:
 
 - `Cost Management (OnDemand + Savings Plan)`
 - `Cost Management (fully covered by RI)`
+- `Cost Management (excluded meters only)`
 - `Retail list price (<currency>)`
 - `None`
 - subscriptions whose Resource Graph or Cost Management requests failed

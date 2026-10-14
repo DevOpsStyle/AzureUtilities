@@ -7,7 +7,7 @@ description: Assess the estimated impact of Azure compute and storage price incr
 
 ## Purpose
 
-Identify affected Azure virtual machines, virtual machine scale sets, managed disks, storage accounts, Azure NetApp Files capacity pools, and Elastic SAN resources. Estimate the monthly and annual increase by using recent billed cost where possible and public list prices only as a fallback.
+Identify affected Azure virtual machines, virtual machine scale sets, managed disks, disk snapshots, storage accounts, Azure NetApp Files capacity pools, and Elastic SAN resources. Estimate the monthly and annual increase by using recent billed cost where possible and public list prices only as a fallback.
 
 This is an estimate, not a bill or commercial quote. Always state that the final impact depends on actual usage, commercial agreements, Reserved Instances, Savings Plans, and future price publication.
 
@@ -48,11 +48,12 @@ State the scope, date range, and fallback currency before presenting results.
 
 ### 2. Inventory potentially affected resources
 
-Run the three paginated Azure Resource Graph queries in [data acquisition](./references/data-acquisition.md):
+Run the four paginated Azure Resource Graph queries in [data acquisition](./references/data-acquisition.md):
 
 1. Virtual machines and virtual machine scale sets
 2. Managed disks
-3. Storage accounts, Azure NetApp Files capacity pools, and Elastic SAN
+3. Disk snapshots
+4. Storage accounts, Azure NetApp Files capacity pools, and Elastic SAN
 
 Apply the classifications in [assessment rules](./references/assessment-rules.md). Keep only affected resources. If none are found, report the checked scope and rules, then stop without issuing Cost Management queries.
 
@@ -62,6 +63,8 @@ For every subscription containing an affected resource, run both Cost Management
 
 1. Actual cost for `PricingModel = OnDemand`, grouped by resource ID and meter subcategory
 2. Amortized cost grouped by resource ID and pricing model
+
+Filter both queries to the `Virtual Machines` and `Storage` meter categories so unrelated charges on the same resource, such as Microsoft Defender, are not included.
 
 Follow every `nextLink`. On HTTP 429, honor `Retry-After` when present, otherwise wait 30 seconds, and retry up to six times. Surface any subscription that fails because of permissions or another API error; do not treat it as zero cost.
 
@@ -74,7 +77,8 @@ Apply the formulas and commitment handling in [assessment rules](./references/as
 - exclude nonaffected storage meters from the on-demand baseline
 - include Savings Plan amortized cost
 - exclude Reserved Instance cost until reservation expiry
-- use retail list price only when no billed usage is available
+- assign a zero baseline when only excluded meters were billed
+- use retail list price only for VMs and managed disks with no billed usage
 
 If a retail price cannot be matched confidently, set the cost source to `None` and explain why. Do not substitute a similar SKU or region.
 
@@ -89,7 +93,8 @@ Before reporting:
 5. Confirm monthly increase equals baseline multiplied by the percentage.
 6. Confirm annual increase equals monthly increase multiplied by 12.
 7. Confirm totals are grouped by currency.
-8. Flag list-price rows, fully Reserved Instance-covered rows, deallocated VMs, and unattached disks.
+8. Confirm only `Virtual Machines` and `Storage` meter categories were included.
+9. Flag list-price rows, fully Reserved Instance-covered rows, excluded-meter-only rows, deallocated VMs, and unattached disks.
 
 ### 6. Produce the report
 
@@ -101,7 +106,7 @@ Return:
 - affected-resource counts by category
 - estimated monthly and annual increases by currency
 - top affected resources
-- data-quality summary showing billed, list-price, fully Reserved Instance-covered, missing-price, and failed-subscription counts
+- data-quality summary showing billed, list-price, fully Reserved Instance-covered, excluded-meter-only, missing-price, and failed-subscription counts
 - limitations and the estimate disclaimer
 - a UTF-8 CSV attachment when file generation is available
 
@@ -114,4 +119,4 @@ Return:
 
 ## Local reference implementation
 
-The repository also contains `CostIncrease_Assessment_v5.ps1` for local execution with `Az.Accounts` and `Az.ResourceGraph`. The SRE workflow should use the agent's managed identity and built-in read tools; it does not require PowerShell in the SRE sandbox.
+The repository also contains `CostIncrease_Assessment_v6.ps1` for local execution with `Az.Accounts` and `Az.ResourceGraph`. The SRE workflow should use the agent's managed identity and built-in read tools; it does not require PowerShell in the SRE sandbox.

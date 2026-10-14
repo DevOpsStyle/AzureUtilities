@@ -1,5 +1,5 @@
-# CostIncrease_Assessment_v5.ps1
-#
+# CostIncrease_Assessment_v6.ps1
+# Version 6
 # Estimates the impact of the Azure price changes effective 1 February 2027.
 # Cost baseline from Cost Management; public list price only as fallback.
 #
@@ -8,23 +8,27 @@
 # on commercial agreements and on commitments (Reserved Instances, Savings Plans),
 # and must be verified against actual billing.
 #
-# Pricing rules applied:
-#  - v1 series (Bv1, D, Ds, F, Fs, G, Gs, Ls, NP, HC) and v2 series
+# Pricing rules applied (as per the Azure notifications on VM lifecycle and on
+# regional pricing updates):
+#  - v1 series (Bv1, D, Ds, F, Fs, G, Gs, L/Ls, NP, HC/HCS) and v2 series
 #    (Av2, Amv2, Dv2, Dsv2, Fsv2, Lsv2): +25% in ANY region (PAYG, EA, MCA)
-#  - v3-v6 and AMD v7: regional +8-17%, only in the 7 affected regions
-#  - Intel v7 (Dsv7, Ddsv7, Dlsv7, Dldsv7, Esv7, Edsv7): no increase
-#  - v1/v2 SKUs NOT on the lists above: regional increase in affected regions
+#  - Regional increase on specific VMs and Storage services in 7 regions:
+#    West Europe 9%, North Europe 17%, France Central 11%, France South 11%,
+#    Norway East 9%, Norway West 9%, Southeast Asia 8%
+#  - Excluded from the regional increase: the v1/v2 series above and
+#    Intel v7 (Dsv7, Ddsv7, Dlsv7, Dldsv7, Esv7, Edsv7)
 #  - The two increases never stack on the same VM
 #  - Reserved Instances: price locked until the RI expires
-#  - Savings Plans: covered usage reflects the new underlying rates from 1 Feb 2027
-#  - Storage: regional increase on selected services; published exclusions removed
+#  - Savings Plans: covered usage reflects the new underlying rates
+#  - Only meters in the 'Virtual Machines' and 'Storage' categories are
+#    considered (e.g. Microsoft Defender charges on the same resource are ignored)
 #
 # Requires:
 #   Install-Module Az.Accounts, Az.ResourceGraph -Scope CurrentUser
 #   Connect-AzAccount -Tenant <tenant>
 #   Reader + Cost Management Reader on the subscriptions
 param(
-    [string]$Currency = "EUR",                       # currency for list-price fallback only
+    [string]$Currency = "EUR",                       # currency for list-price fallback only: set it to the billing currency
     [string]$OutFile  = ".\azure_price_increase_impact.csv",
     [int]$CostMonths  = 3,                           # full months used for the monthly average
     [switch]$NoListPriceFallback,                    # skip the Retail API completely
@@ -40,12 +44,14 @@ $disclaimerLines = @(
 
 $regionCase = 'case(region == "northeurope", 17, region in ("francecentral", "francesouth"), 11, region in ("westeurope", "norwayeast", "norwaywest"), 9, region == "southeastasia", 8, 0)'
 
-# Storage meter subcategories EXCLUDED from the regional increase (regex, case-insensitive).
-# Published list: Azure Container Storage, Azure Managed Lustre, ANF Cross Region
-# Replication SKU, Blob Features, Change Feed, General Block Blob, Import/Export, Queues,
-# Queues v2, Standard Page Blob, Storage Actions, Storage Bandwidth, Storage Discovery,
-# Tables, Transaction Optimized SKU.
-# The regex also matches "v2" variants (e.g. "General Block Blob v2").
+# Only these meter categories can be affected by the price changes
+$inScopeMeterCategories = @('Virtual Machines', 'Storage')
+
+# Storage services EXCLUDED from the regional increase (regex on MeterSubcategory, case-insensitive).
+# Published list: Azure Container Storage, Azure Managed Lustre, Azure NetApp Files - Cross Region
+# Replication SKU, Blob Features, Change Feed, General Block Blob, Import/Export, Queues, Queues v2,
+# Standard Page Blob, Storage Actions, Storage Bandwidth, Storage Discovery, Tables,
+# Transaction Optimized SKU. The regex also matches "v2" variants (e.g. "General Block Blob v2").
 $excludedStoragePatterns = @(
     'Container Storage', 'Managed Lustre', 'Cross Region Replication', 'Blob Features',
     'Change Feed', 'General Block Blob', 'Import/Export', 'Queues', 'Standard Page Blob',
@@ -109,19 +115,19 @@ function New-CostBody($type, $from, $to, $groupBy, $filter) {
         granularity = 'None'
         aggregation = @{ totalCost = @{ name = 'Cost'; function = 'Sum' } }
         grouping    = @($groupBy | ForEach-Object { @{ type = 'Dimension'; name = $_ } })
+        filter      = $filter
     }
-    if ($filter) { $ds.filter = $filter }
     $body = @{
         type       = $type
         timeframe  = 'Custom'
         timePeriod = @{ from = $from; to = $to }
         dataset    = $ds
     }
-    return ($body | ConvertTo-Json -Depth 10)
+    return ($body | ConvertTo-Json -Depth 12)
 }
 
-# Per resource (lowercase id):
-#   OnDemand         = actual OnDemand cost (all meters)
+# Per resource (lowercase id), in-scope meter categories only:
+#   OnDemand         = actual OnDemand cost
 #   OnDemandSubject  = actual OnDemand cost on meters subject to the increase
 #   Amortized[model] = amortized cost by PricingModel (OnDemand / Reservation / SavingsPlan / Spot)
 $cost = @{}
@@ -139,14 +145,16 @@ function Get-CostData([string[]]$subscriptionIds) {
     $to    = $first.AddDays(-1).ToString('yyyy-MM-dd')
     Write-Host "Reading Cost Management data from $from to $to ($CostMonths months) ..."
 
-    $onDemandFilter = @{ dimensions = @{ name = 'PricingModel'; operator = 'In'; values = @('OnDemand') } }
-    $bodyA = New-CostBody 'ActualCost'    $from $to @('ResourceId', 'MeterSubcategory') $onDemandFilter
-    $bodyB = New-CostBody 'AmortizedCost' $from $to @('ResourceId', 'PricingModel') $null
+    $categoryFilter = @{ dimensions = @{ name = 'MeterCategory'; operator = 'In'; values = $inScopeMeterCategories } }
+    $onDemandFilter = @{ dimensions = @{ name = 'PricingModel';  operator = 'In'; values = @('OnDemand') } }
+
+    $bodyA = New-CostBody 'ActualCost'    $from $to @('ResourceId', 'MeterSubcategory') @{ and = @($categoryFilter, $onDemandFilter) }
+    $bodyB = New-CostBody 'AmortizedCost' $from $to @('ResourceId', 'PricingModel')     $categoryFilter
 
     foreach ($sub in $subscriptionIds) {
         Write-Host "  Subscription $sub"
 
-        # Query A: OnDemand actual cost split by meter subcategory
+        # Query A: OnDemand actual cost (VM + Storage meters) split by meter subcategory
         $a = Invoke-CostQuery $sub $bodyA
         if ($a) {
             $iC = [array]::IndexOf($a.Columns, 'Cost')
@@ -164,7 +172,7 @@ function Get-CostData([string[]]$subscriptionIds) {
             }
         }
 
-        # Query B: amortized cost by pricing model (RI / Savings Plan coverage)
+        # Query B: amortized cost (VM + Storage meters) by pricing model
         $b = Invoke-CostQuery $sub $bodyB
         if ($b) {
             $iC = [array]::IndexOf($b.Columns, 'Cost')
@@ -301,13 +309,19 @@ function New-Row($cat, $r, $sku, $qty, $os, $state, $regime, $pct, $listMonthly,
     if ($c -and $cmBase -gt 0) {
         $source = 'Cost Management (OnDemand + Savings Plan)'
         $base = [math]::Round($cmBase, 2)
-        if ($spMonthly -gt 0) { $notes += "Includes Savings Plan cost: Savings Plans reflect the new underlying rates from 1 Feb 2027" }
+        if ($spMonthly -gt 0) { $notes += "Includes Savings Plan cost: Savings Plans reflect the new underlying rates" }
         if ($riPct -gt 0)     { $notes += "Part of usage covered by Reserved Instances ($riPct%): excluded until the reservation expires" }
+        if ($onDemand -gt $subject) { $notes += "Billed meters excluded from the increase are not included in the base" }
     }
     elseif ($c -and $amortTotal -gt 0 -and $riPct -ge 99.9) {
         $source = 'Cost Management (fully covered by RI)'
         $base = 0
         $notes += "Fully covered by Reserved Instances in the period: no increase until the reservation expires (check expiry date)"
+    }
+    elseif ($c -and $onDemand -gt 0 -and $subject -eq 0) {
+        $source = 'Cost Management (excluded meters only)'
+        $base = 0
+        $notes += "All billed meters are on the exclusion list: no increase expected"
     }
     elseif ($null -ne $listMonthly) {
         $source = "Retail list price ($Currency)"
@@ -326,33 +340,33 @@ function New-Row($cat, $r, $sku, $qty, $os, $state, $regime, $pct, $listMonthly,
     }
 
     [pscustomobject]@{
-        Category              = $cat
-        SubscriptionId        = $r.subscriptionId
-        ResourceGroup         = $r.resourceGroup
-        Name                  = $r.name
-        Type                  = $r.type
-        Location              = $r.location
-        Sku                   = $sku
-        Quantity              = $qty
-        OsType                = $os
-        State                 = $state
-        IncreaseRegime        = $regime
-        ExpectedIncreasePct   = $pct
-        CostSource            = $source
-        Currency              = $cur
-        BaseMonthlyCost       = $base
+        Category                 = $cat
+        SubscriptionId           = $r.subscriptionId
+        ResourceGroup            = $r.resourceGroup
+        Name                     = $r.name
+        Type                     = $r.type
+        Location                 = $r.location
+        Sku                      = $sku
+        Quantity                 = $qty
+        OsType                   = $os
+        State                    = $state
+        IncreaseRegime           = $regime
+        ExpectedIncreasePct      = $pct
+        CostSource               = $source
+        Currency                 = $cur
+        BaseMonthlyCost          = $base
         EstimatedMonthlyIncrease = $inc
         EstimatedAnnualIncrease  = $annual
-        ActualOnDemandMonthly = $onDemand
-        ActualSubjectMonthly  = $subject
-        SavingsPlanMonthly    = $spMonthly
-        AmortizedMonthlyTotal = $amortTotal
-        OnDemandSharePct      = $odPct
-        ReservationSharePct   = $riPct
-        SavingsPlanSharePct   = $spPct
-        ListPriceMonthly      = $listMonthly
-        Notes                 = ($notes -join "; ")
-        ResourceId            = $r.id
+        ActualOnDemandMonthly    = $onDemand
+        ActualSubjectMonthly     = $subject
+        SavingsPlanMonthly       = $spMonthly
+        AmortizedMonthlyTotal    = $amortTotal
+        OnDemandSharePct         = $odPct
+        ReservationSharePct      = $riPct
+        SavingsPlanSharePct      = $spPct
+        ListPriceMonthly         = $listMonthly
+        Notes                    = ($notes -join "; ")
+        ResourceId               = $r.id
     }
 }
 
@@ -387,22 +401,32 @@ Resources
 | project subscriptionId, resourceGroup, name, type, location, diskSku = tostring(sku.name), diskSizeGB = toint(properties.diskSizeGB), diskTier = tostring(properties.tier), diskState = tostring(properties.diskState), diskIops = tolong(properties.diskIOPSReadWrite), diskMbps = tolong(properties.diskMBpsReadWrite), regionalPct, id
 "@
 
+$snapshotQuery = @"
+Resources
+| where type =~ "microsoft.compute/snapshots"
+| extend region = tolower(location)
+| extend regionalPct = $regionCase
+| where regionalPct > 0
+| project subscriptionId, resourceGroup, name, type, location, snapSku = tostring(sku.name), diskSizeGB = toint(properties.diskSizeGB), incremental = tobool(properties.incremental), regionalPct, id
+"@
+
 $storageQuery = @"
 Resources
 | where type in~ ("microsoft.storage/storageaccounts", "microsoft.netapp/netappaccounts/capacitypools", "microsoft.elasticsan/elasticsans")
 | extend region = tolower(location)
 | extend regionalPct = $regionCase
 | where regionalPct > 0
-| extend skuName = tostring(sku.name), isHns = tobool(properties.isHnsEnabled)
-| project subscriptionId, resourceGroup, name, type, location, kind, skuName, isHns, regionalPct, id
+| extend skuName = tostring(sku.name)
+| project subscriptionId, resourceGroup, name, type, location, kind, skuName, regionalPct, id
 "@
 
 Write-Host "Querying Azure Resource Graph ..."
-$vms      = @(Invoke-ArgQuery $vmQuery)
-$disks    = @(Invoke-ArgQuery $diskQuery)
-$storages = @(Invoke-ArgQuery $storageQuery)
+$vms       = @(Invoke-ArgQuery $vmQuery)
+$disks     = @(Invoke-ArgQuery $diskQuery)
+$snapshots = @(Invoke-ArgQuery $snapshotQuery)
+$storages  = @(Invoke-ArgQuery $storageQuery)
 
-$subs = @($vms + $disks + $storages | ForEach-Object { $_.subscriptionId } | Sort-Object -Unique)
+$subs = @($vms + $disks + $snapshots + $storages | ForEach-Object { $_.subscriptionId } | Sort-Object -Unique)
 if ($subs.Count -gt 0) { Get-CostData $subs }
 
 $rows = @()
@@ -429,16 +453,21 @@ foreach ($d in $disks) {
     $rows += New-Row "Managed Disk" $d $sku 1 "" $d.diskState "Regional increase" $d.regionalPct $list $notes
 }
 
-# ---------- Storage Accounts, NetApp, Elastic SAN ----------
+# ---------- Disk snapshots (usage-based, no list-price fallback) ----------
+foreach ($sn in $snapshots) {
+    $notes = @()
+    if ($sn.incremental) { $notes += "Incremental snapshot: billed on used size" }
+    $sku = "$($sn.snapSku) ($($sn.diskSizeGB) GB)"
+    $rows += New-Row "Disk Snapshot" $sn $sku 1 "" "" "Regional increase" $sn.regionalPct $null $notes
+}
+
+# ---------- Storage Accounts, NetApp, Elastic SAN (usage-based) ----------
 foreach ($s in $storages) {
     $t = $s.type.ToLower()
     $notes = @()
-    if ($t -eq 'microsoft.storage/storageaccounts') {
-        $cat = "Storage Account"
-        $notes += "Meters excluded from the regional increase (e.g. General Block Blob, Standard Page Blob, Queues, Tables, Bandwidth) are not included in the base"
-    }
-    elseif ($t -like 'microsoft.netapp/*') { $cat = "Azure NetApp Files" }
-    else                                   { $cat = "Elastic SAN" }
+    if     ($t -eq 'microsoft.storage/storageaccounts') { $cat = "Storage Account" }
+    elseif ($t -like 'microsoft.netapp/*')              { $cat = "Azure NetApp Files" }
+    else                                                { $cat = "Elastic SAN" }
     $sku = "$($s.kind) $($s.skuName)".Trim()
     $rows += New-Row $cat $s $sku $null "" "" "Regional increase" $s.regionalPct $null $notes
 }
@@ -452,7 +481,6 @@ if ($NoDisclaimerInCsv) {
     $sorted | Export-Csv -Path $OutFile -NoTypeInformation -Encoding UTF8
 }
 else {
-    # Disclaimer lines at the top of the file, then an empty line, then the table
     $csvLines = @()
     foreach ($l in $disclaimerLines) { $csvLines += '"' + $l.Replace('"', '""') + '"' }
     $csvLines += ''
