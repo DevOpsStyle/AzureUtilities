@@ -63,6 +63,51 @@ With many subscriptions, the Cost Management API may throttle requests (HTTP 429
 
 ---
 
+## Azure SRE Agent plugin
+
+This folder is also a standalone Azure SRE Agent plugin. It imports the `azure-cost-increase-assessment` skill, which applies the same pricing rules through the agent's built-in read-only Azure tools and sandboxed code execution. It does not change Azure resources and does not require PowerShell in the SRE sandbox.
+
+### SRE prerequisites
+
+- An Azure SRE Agent in **Running** state
+- **SRE Agent Author** or **Administrator** role on the agent
+- The **Plugins** page under **Builder**
+- **Reader** and **Cost Management Reader** assigned to the SRE Agent managed identity for the subscriptions to assess
+
+### Install from this repository
+
+1. In the [Azure SRE Agent portal](https://sre.azure.com), open the agent.
+2. Go to **Builder > Plugins** and select **Install from URL**.
+3. Enter `DevOpsStyle/AzureUtilities` as the GitHub repository URL.
+4. Enter `utilities/azure-cost-increase-assessment` as **Path in repo**.
+5. Select **Install**.
+6. Verify that `azure-cost-increase-assessment` appears under **Builder > Skill builder** or **Agent Canvas**.
+
+The installation is pinned to the current Git commit. After changing the skill in this repository, explicitly update or reinstall the plugin on each agent that should receive the new version.
+
+The equivalent REST request body is:
+
+```json
+{
+  "sourceUrl": "DevOpsStyle/AzureUtilities",
+  "pathInRepo": "utilities/azure-cost-increase-assessment"
+}
+```
+
+Example prompts:
+
+```text
+Assess the impact of the Azure price increases effective 1 February 2027 across all subscriptions you can access. Use the last three complete months and EUR for retail fallback.
+```
+
+```text
+Which resources in subscription <subscription-id> are affected by the February 2027 Azure price increases? Produce a CSV and separate totals by currency.
+```
+
+The skill is an instruction-based workflow modeled on the [Azure SRE Agent plugin format](https://learn.microsoft.com/azure/sre-agent/install-plugin-from-url). The local PowerShell script remains the reference implementation for interactive use outside Azure SRE Agent.
+
+---
+
 ## 3. Pricing rules applied
 
 The rules below reflect the Azure VM lifecycle and pricing changes announced on 28 September 2026.

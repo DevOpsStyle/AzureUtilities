@@ -6,9 +6,9 @@ A growing collection of practical, reusable utilities for assessing, operating, 
 
 ## Utility catalog
 
-| Utility | Purpose | Download |
-|---|---|---|
-| [Azure Cost Increase Assessment](./utilities/azure-cost-increase-assessment/) | Inventories affected Azure compute and storage resources and estimates the monthly and annual impact of the price changes effective 1 February 2027. | [Download ZIP](./downloads/Azure-Cost-Increase-Assessment-v5.zip) |
+| Utility | Purpose | Azure SRE Agent | Download |
+|---|---|---|---|
+| [Azure Cost Increase Assessment](./utilities/azure-cost-increase-assessment/) | Inventories affected Azure compute and storage resources and estimates the monthly and annual impact of the price changes effective 1 February 2027. | [Install-from-URL instructions](./utilities/azure-cost-increase-assessment/#azure-sre-agent-plugin) | [Download ZIP](./downloads/Azure-Cost-Increase-Assessment-v5.zip) |
 
 ## Quick start
 
@@ -34,9 +34,14 @@ AzureUtilities/
 `-- utilities/
     `-- azure-cost-increase-assessment/
         |-- CostIncrease_Assessment_v5.ps1
+        |-- plugin.json
         |-- README.md
-        `-- media/
-            `-- regional-and-vm-price-increases-demo.gif
+        |-- media/
+        |   `-- regional-and-vm-price-increases-demo.gif
+        `-- skills/
+            `-- azure-cost-increase-assessment/
+                |-- SKILL.md
+                `-- references/
 ```
 
 Future utilities should be added under `utilities/<utility-name>/` and include a self-contained `README.md`. Add each new utility to the catalog above so users can discover it from the repository home page.
