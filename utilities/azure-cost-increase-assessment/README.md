@@ -76,14 +76,64 @@ This folder is also a standalone Azure SRE Agent plugin. It imports the `azure-c
 
 ### Install from this repository
 
-1. In the [Azure SRE Agent portal](https://sre.azure.com), open the agent.
-2. Go to **Builder > Plugins** and select **Install from URL**.
-3. Enter `DevOpsStyle/AzureUtilities` as the GitHub repository URL.
-4. Enter `utilities/azure-cost-increase-assessment` as **Path in repo**.
-5. Select **Install**.
-6. Verify that `azure-cost-increase-assessment` appears under **Builder > Skill builder** or **Agent Canvas**.
+The plugin is stored in a subfolder of this repository. The repository and subfolder must therefore be entered in two separate fields:
 
-The installation is pinned to the current Git commit. After changing the skill in this repository, explicitly update or reinstall the plugin on each agent that should receive the new version.
+| Azure SRE Agent field | Exact value |
+|---|---|
+| **GitHub repository URL** | `DevOpsStyle/AzureUtilities` |
+| **Path in repo** | `utilities/azure-cost-increase-assessment` |
+
+> **Important:** enter the path exactly as shown. It is relative to the repository root and must not start with `/`, include `plugin.json`, or contain the GitHub repository URL.
+
+1. Open the [Azure SRE Agent portal](https://sre.azure.com) and select the target agent.
+2. Confirm that the agent is in the **Running** state.
+3. In the left navigation, go to **Builder > Plugins**.
+4. Select **Install from URL**.
+5. In **GitHub repository URL**, enter:
+
+   ```text
+   DevOpsStyle/AzureUtilities
+   ```
+
+   The full URL `https://github.com/DevOpsStyle/AzureUtilities` is also accepted.
+
+6. In **Path in repo**, enter:
+
+   ```text
+   utilities/azure-cost-increase-assessment
+   ```
+
+7. Leave the credentials section empty for the public repository. If the repository is made private, expand **Advanced** and provide a GitHub personal access token with read access to the repository.
+8. Select **Install** and wait for the confirmation message:
+
+   ```text
+   Plugin installed from URL successfully with 1 skill
+   ```
+
+9. Close the dialog and open **Builder > Skill builder** or **Agent Canvas**.
+10. Verify that the `azure-cost-increase-assessment` skill is listed.
+
+The installed plugin should appear in the Plugins grid with the **Standalone** badge. Azure SRE Agent pins the installation to the current Git commit, so later repository changes are not applied automatically. Use the plugin update action, or reinstall it, when a newer version should be loaded.
+
+### Verify the installation
+
+Start a new agent chat and send:
+
+```text
+Assess the impact of the Azure price increases effective 1 February 2027 across all subscriptions you can access. Use the last three complete months and EUR for retail fallback.
+```
+
+The skill should activate automatically. If it reports authorization failures, assign **Reader** and **Cost Management Reader** to the SRE Agent managed identity at the subscriptions to assess, then retry after Azure RBAC propagation completes.
+
+### Common installation errors
+
+| Symptom | Check |
+|---|---|
+| Plugin or `plugin.json` not found | **Path in repo** must be exactly `utilities/azure-cost-increase-assessment` |
+| Repository not found | Use `DevOpsStyle/AzureUtilities`; if the repository is private, provide a PAT with read access |
+| Skill does not appear after installation | Refresh the Plugins page, confirm the success message, then check **Skill builder** or **Agent Canvas** |
+| The portal shows an unexpected React error | Refresh the page and first check whether the plugin was installed despite the UI error; if not, retry with the exact field values above |
+| Assessment returns authorization errors | Grant the agent managed identity **Reader** and **Cost Management Reader** on the target scope |
 
 The equivalent REST request body is:
 
@@ -94,11 +144,7 @@ The equivalent REST request body is:
 }
 ```
 
-Example prompts:
-
-```text
-Assess the impact of the Azure price increases effective 1 February 2027 across all subscriptions you can access. Use the last three complete months and EUR for retail fallback.
-```
+Additional example:
 
 ```text
 Which resources in subscription <subscription-id> are affected by the February 2027 Azure price increases? Produce a CSV and separate totals by currency.
