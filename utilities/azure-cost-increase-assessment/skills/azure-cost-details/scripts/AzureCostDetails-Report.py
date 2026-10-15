@@ -1,4 +1,4 @@
-# Azure SRE Agent Canvas tool name: AzureCostDetails_Report
+# Azure SRE Agent Canvas tool name: AzureCostDetails-Report
 # Identity tab: enable ARM. Set the tool timeout to 900 seconds.
 from azure.identity import DefaultAzureCredential
 
@@ -17,7 +17,7 @@ def main(
 
     Dates are YYYY-MM-DD, inclusive; blank dates select yesterday in UTC.
     Keep the returned resume_state unchanged when status is pending/retry.
-    On ready, pass operation_url to AzureCostDetails_Read. Never restart a
+    On ready, pass operation_url to AzureCostDetails-Read. Never restart a
     report merely because it is pending. Returns JSON only, without blob SAS.
     """
     import json
@@ -161,7 +161,7 @@ def main(
                         "resume_state": json.dumps(state, separators=(",", ":")),
                         "blob_count": manifest.get("blobCount", len(manifest.get("blobs", []))),
                         "byte_count": manifest.get("byteCount"),
-                        "next_tool": "AzureCostDetails_Read",
+                        "next_tool": "AzureCostDetails-Read",
                     }
                 if not state["url"]:
                     raise ValueError("Azure non ha restituito il link Location per il polling")

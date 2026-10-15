@@ -1,4 +1,4 @@
-# Azure SRE Agent Canvas tool name: AzureCostDetails_Read
+# Azure SRE Agent Canvas tool name: AzureCostDetails-Read
 # Identity tab: enable ARM. Set the tool timeout to 900 seconds.
 from azure.identity import DefaultAzureCredential
 

@@ -73,7 +73,9 @@ These patterns also exclude names with a `v2` suffix. Exclude meter subcategorie
 
 ## Cost Management aggregation
 
-Filter Cost Management data to the `Virtual Machines` and `Storage` meter categories. Ignore other charges associated with the same resource ID, such as Microsoft Defender.
+The billed cost comes from the Cost Details tools. `AzureCostDetails-Read` with `view="resources"` returns, for each resource and currency, the total cost, the pricing models, and the service names present. It does not split meter subcategories: do that with `view="rows"` for one resource at a time (see the skill `azure-cost-advisor`, `references/deep-dive-playbooks.md`). In bulk, the baseline of storage accounts, Azure NetApp Files, and Elastic SAN is therefore an upper bound.
+
+Filter Cost Management data to the `Virtual Machines` and `Storage` meter categories. Ignore other charges associated with the same resource ID, such as Microsoft Defender. In bulk, a resource whose service names include other categories is flagged because its baseline may be overstated.
 
 For each lowercase resource ID, aggregate:
 

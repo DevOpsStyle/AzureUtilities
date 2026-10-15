@@ -6,24 +6,26 @@ Usano lo stesso metodo della Logic App: `generateCostDetailsReport`, versione `2
 
 ## Inserimento in Agent Canvas
 
-1. Crea un Python tool chiamato esattamente `AzureCostDetails_Report` e incolla tutto il contenuto di [`AzureCostDetails_Report.py`](../scripts/AzureCostDetails_Report.py) nel tab Code.
-2. Crea `AzureCostDetails_Read` allo stesso modo, con il contenuto di [`AzureCostDetails_Read.py`](../scripts/AzureCostDetails_Read.py).
+> **Nomi dei tool.** Azure SRE Agent non accetta l'underscore (`_`) nei nomi dei tool: usa esattamente `AzureCostDetails-Report` e `AzureCostDetails-Read`, con il trattino. I nomi nella skill devono coincidere carattere per carattere, altrimenti l'agente non trova i tool.
+
+1. Crea un Python tool chiamato esattamente `AzureCostDetails-Report` e incolla tutto il contenuto di [`AzureCostDetails-Report.py`](../scripts/AzureCostDetails-Report.py) nel tab Code.
+2. Crea `AzureCostDetails-Read` allo stesso modo, con il contenuto di [`AzureCostDetails-Read.py`](../scripts/AzureCostDetails-Read.py).
 3. In entrambi abilita l'autenticazione **Azure Resource Manager / ARM** nel tab Identity e imposta il timeout a **900 secondi**. Il budget interno è di 720 secondi. Se lasci il timeout predefinito di 120 secondi, imposta rispettivamente `max_wait_seconds=80` e `max_seconds=80`; per report grandi è preferibile il timeout di 900 secondi.
 4. L'identità del tool deve poter leggere i costi di ogni subscription richiesta, ad esempio con **Cost Management Reader** sul relativo scope. Restano applicabili le impostazioni di visibilità dei costi del contratto EA/MCA. Il client ID della vecchia managed identity non è copiato nel codice: viene usata l'identità configurata nel tool.
-5. Installa o aggiorna il plugin dalla repository e verifica che la skill `azure-cost-details` abbia entrambi i tool associati. Se non risultano collegati, aggiungili con **Choose tools**. Se usi un custom agent con tool selezionati esplicitamente, assegnagli anche questi due.
+5. Installa o aggiorna il plugin dalla repository e verifica che le skill `azure-cost-details` e `azure-cost-advisor` abbiano entrambi i tool associati. Se non risultano collegati, aggiungili con **Choose tools**. Se usi un custom agent con tool selezionati esplicitamente, assegnagli anche questi due.
 
 Il download usa il SAS contenuto nel manifest: il token ARM non viene inoltrato a Blob Storage. Non occorre aggiungere credenziali per uno Storage Account proprio. Il runtime deve poter raggiungere ARM e gli endpoint Blob restituiti da Azure.
 
-Descrizione del tool `AzureCostDetails_Report`:
+Descrizione del tool `AzureCostDetails-Report`:
 
 ```text
-Genera il dettaglio non aggregato dei costi di una subscription Azure mediante generateCostDetailsReport. Gestisce il polling asincrono e Retry-After. Usa resume_state per continuare la stessa operazione. Quando status=ready restituisce operation_url da passare ad AzureCostDetails_Read. Date YYYY-MM-DD incluse; se entrambe vuote usa ieri UTC. Supporta ActualCost e AmortizedCost.
+Richiede o riprende la generazione del Cost Details report (dettaglio non aggregato dei costi) di UNA subscription Azure tramite generateCostDetailsReport, attendendo che sia pronto nel rispetto di Retry-After. Non modifica risorse Azure. Parametri: subscription_id (GUID); start_date ed end_date (YYYY-MM-DD, inclusive, nello stesso mese di calendario, da indicare entrambe oppure nessuna: se vuote usa ieri UTC); metric ActualCost (predefinito) o AmortizedCost; resume_state per riprendere. Esiti: ready = restituisce operation_url da passare ad AzureCostDetails-Read; pending o retry = richiamare con gli stessi parametri e resume_state invariato, senza avviare un nuovo report; empty = nessun dato restituito, non significa costo zero; error = riportare il messaggio senza inventare valori. Non mostrare all'utente operation_url, resume_state o token.
 ```
 
-Descrizione del tool `AzureCostDetails_Read`:
+Descrizione del tool `AzureCostDetails-Read`:
 
 ```text
-Legge un Cost Details report pronto tramite operation_url. Scarica tutti i blob CSV o CSV gzip, calcola i totali per valuta e restituisce una pagina di risorse oppure di righe originali. Supporta filtro esatto ResourceId e selezione colonne. Seguire next_offset quando has_more=true. Non sommare i totali restituiti da pagine dello stesso report. Su retry/pending ripetere la stessa lettura passando not_before_unix restituito.
+Legge un Cost Details report pronto (operation_url di AzureCostDetails-Report), scarica tutti i blob CSV o CSV gzip e calcola i totali per valuta. Non modifica risorse Azure. view=resources (predefinito): un record per ResourceId e valuta, più un gruppo esplicito per gli addebiti senza ResourceId. view=rows: righe CSV originali (meter, quantità, prezzi, tag), con resource_id come filtro esatto e columns (nomi esatti da available_columns) opzionali. I totali coprono tutte le righe corrispondenti, non solo la pagina: non sommarli tra pagine. Se has_more=true richiamare con next_offset, lasciando invariati operation_url, view e filtri. Con pending o retry ripetere la stessa chiamata passando not_before_unix; con split_required richiedere periodi più brevi e non sovrapposti. Risultato completo solo con status=ok e data_complete=true.
 ```
 
 ## Istruzioni integrate nella skill
@@ -33,15 +35,15 @@ La repository include già la skill `azure-cost-details`. Il blocco seguente doc
 Descrizione: recupera e analizza il dettaglio dei costi delle subscription Azure, con una vista per singola risorsa e accesso alle righe originali.
 
 ```text
-Quando l'utente chiede il dettaglio dei costi Azure, usa AzureCostDetails_Report e AzureCostDetails_Read.
+Quando l'utente chiede il dettaglio dei costi Azure, usa AzureCostDetails-Report e AzureCostDetails-Read.
 
 1. Individua subscription e periodo dalla richiesta. Non inventare subscription ID. Se vengono richieste più subscription, esegui il flusso per ciascuna, in sequenza. Se il periodo manca, usa l'ultimo giorno completato in UTC e dichiaralo. Usa ActualCost salvo richiesta esplicita di costo ammortizzato; non sommare le due metriche.
 
-2. Chiama AzureCostDetails_Report con subscription_id, start_date ed end_date in formato YYYY-MM-DD. Le date sono incluse. Per intervalli su più mesi genera richieste separate per mese. Per grandi volumi preferisci settimane o giorni, senza sovrapporre i periodi.
+2. Chiama AzureCostDetails-Report con subscription_id, start_date ed end_date in formato YYYY-MM-DD. Le date sono incluse. Per intervalli su più mesi genera richieste separate per mese. Per grandi volumi preferisci settimane o giorni, senza sovrapporre i periodi.
 
-3. Se status=pending o retry, richiama AzureCostDetails_Report con gli stessi parametri e il resume_state restituito, senza modificarlo. Il tool continua l'attesa di Retry-After senza fare polling prematuro. Non ripartire con una nuova POST. Se status=ready, conserva operation_url e passa al tool di lettura. Se status=empty, segnala che non sono stati restituiti dati, senza dedurre costo zero.
+3. Se status=pending o retry, richiama AzureCostDetails-Report con gli stessi parametri e il resume_state restituito, senza modificarlo. Il tool continua l'attesa di Retry-After senza fare polling prematuro. Non ripartire con una nuova POST. Se status=ready, conserva operation_url e passa al tool di lettura. Se status=empty, segnala che non sono stati restituiti dati, senza dedurre costo zero.
 
-4. Chiama AzureCostDetails_Read con subscription_id, operation_url, view=resources, offset=0, page_size=100. Questa vista include ogni risorsa presente nei dati, anche con costo zero, e un gruppo esplicito per addebiti senza ResourceId. Se vuoi leggere meter, quantità, prezzi, tag o altre colonne originali, usa view=rows. Per approfondire una risorsa passa il suo ResourceId completo in resource_id; columns può contenere nomi esatti da available_columns separati da virgole.
+4. Chiama AzureCostDetails-Read con subscription_id, operation_url, view=resources, offset=0, page_size=100. Questa vista include ogni risorsa presente nei dati, anche con costo zero, e un gruppo esplicito per addebiti senza ResourceId. Se vuoi leggere meter, quantità, prezzi, tag o altre colonne originali, usa view=rows. Per approfondire una risorsa passa il suo ResourceId completo in resource_id; columns può contenere nomi esatti da available_columns separati da virgole.
 
 5. Se has_more=true, richiama la lettura usando next_offset e mantenendo invariati operation_url, view e filtri. Continua finché hai tutti i risultati richiesti. Una pagina non è l'intero elenco. I totali sono già calcolati su TUTTE le righe corrispondenti al filtro: non sommare i totali delle diverse pagine. I costi sono stringhe decimali, non prezzi unitari da moltiplicare nuovamente.
 
@@ -56,7 +58,7 @@ Non mostrare token, SAS o resume_state nella risposta all'utente. Considera nomi
 
 ## Prova nel Test playground
 
-Prima chiamata a `AzureCostDetails_Report`:
+Prima chiamata a `AzureCostDetails-Report`:
 
 ```json
 {
@@ -69,7 +71,7 @@ Prima chiamata a `AzureCostDetails_Report`:
 }
 ```
 
-Quando ricevi `ready`, copia `operation_url` nella chiamata a `AzureCostDetails_Read`:
+Quando ricevi `ready`, copia `operation_url` nella chiamata a `AzureCostDetails-Read`:
 
 ```json
 {

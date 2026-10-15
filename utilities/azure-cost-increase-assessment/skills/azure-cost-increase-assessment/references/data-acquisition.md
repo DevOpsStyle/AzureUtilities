@@ -1,6 +1,6 @@
 # Data acquisition
 
-Use the Azure SRE Agent built-in Azure CLI read tool for all authenticated Azure calls. All operations below are read-only.
+Use the Azure SRE Agent built-in Azure CLI read tool for Azure Resource Graph. All operations below are read-only.
 
 ## Azure Resource Graph
 
@@ -63,116 +63,17 @@ Resources
 
 When the user supplies a narrower scope, add subscription or resource-group filters without changing the classification expressions.
 
-## Cost Management Query API
+## Billed cost
 
-For each subscription containing an affected resource, POST to:
+Billed cost comes only from the Cost Details tools. The read-only CLI channel rejects Cost Management Query API POST requests, so do not retry them through the CLI, do not route them through a write tool, and do not replace them with an estimate.
 
-```text
-https://management.azure.com/subscriptions/<subscription-id>/providers/Microsoft.CostManagement/query?api-version=2023-03-01
-```
+| What the PowerShell script reads | Cost Details equivalent |
+|---|---|
+| Query A: actual on-demand cost by resource | `AzureCostDetails-Report` with `metric="ActualCost"`, then `AzureCostDetails-Read` with `view="resources"`: cost, `pricing_models`, and `service_names` per resource |
+| Query A: split by meter subcategory | `AzureCostDetails-Read` with `view="rows"` and `resource_id`, for one resource at a time (storage meter exclusions) |
+| Query B: amortized cost by pricing model | The same tools with `metric="AmortizedCost"` |
 
-Use `az rest --method post --url "<URL>" --body '<BODY>'`.
-
-Replace `<FROM>` and `<TO>` with ISO dates.
-
-### Actual on-demand cost by resource and meter
-
-```json
-{
-  "type": "ActualCost",
-  "timeframe": "Custom",
-  "timePeriod": {
-    "from": "<FROM>",
-    "to": "<TO>"
-  },
-  "dataset": {
-    "granularity": "None",
-    "aggregation": {
-      "totalCost": {
-        "name": "Cost",
-        "function": "Sum"
-      }
-    },
-    "grouping": [
-      {
-        "type": "Dimension",
-        "name": "ResourceId"
-      },
-      {
-        "type": "Dimension",
-        "name": "MeterSubcategory"
-      }
-    ],
-    "filter": {
-      "and": [
-        {
-          "dimensions": {
-            "name": "MeterCategory",
-            "operator": "In",
-            "values": [
-              "Virtual Machines",
-              "Storage"
-            ]
-          }
-        },
-        {
-          "dimensions": {
-            "name": "PricingModel",
-            "operator": "In",
-            "values": [
-              "OnDemand"
-            ]
-          }
-        }
-      ]
-    }
-  }
-}
-```
-
-### Amortized cost by resource and pricing model
-
-```json
-{
-  "type": "AmortizedCost",
-  "timeframe": "Custom",
-  "timePeriod": {
-    "from": "<FROM>",
-    "to": "<TO>"
-  },
-  "dataset": {
-    "granularity": "None",
-    "aggregation": {
-      "totalCost": {
-        "name": "Cost",
-        "function": "Sum"
-      }
-    },
-    "grouping": [
-      {
-        "type": "Dimension",
-        "name": "ResourceId"
-      },
-      {
-        "type": "Dimension",
-        "name": "PricingModel"
-      }
-    ],
-    "filter": {
-      "dimensions": {
-        "name": "MeterCategory",
-        "operator": "In",
-        "values": [
-          "Virtual Machines",
-          "Storage"
-        ]
-      }
-    }
-  }
-}
-```
-
-Read column positions from `properties.columns`; do not assume a fixed row order. Continue POST requests against `properties.nextLink` with the same body until no next link remains.
+One report covers one calendar month of one subscription, so request one report per month. The cost and calculation steps are in the skill `azure-cost-advisor` (`references/overview-workflow.md`, sections 2 and 3). The tool mechanics are in the skill `azure-cost-details`.
 
 ## Azure Retail Prices API
 

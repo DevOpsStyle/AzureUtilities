@@ -85,9 +85,10 @@ Report counts for:
 - `Cost Management (OnDemand + Savings Plan)`
 - `Cost Management (fully covered by RI)`
 - `Cost Management (excluded meters only)`
-- `Retail list price (<currency>)`
+- `Scenario - currently deallocated` (a currently deallocated VM with historical billing; never added to the totals)
+- `Retail list price (<currency>)` (hypothetical, not billed)
 - `None`
-- subscriptions whose Resource Graph or Cost Management requests failed
+- subscriptions whose Resource Graph or Cost Details requests failed
 
 List every incomplete subscription and its error. Distinguish missing permissions from throttling or service errors.
 
