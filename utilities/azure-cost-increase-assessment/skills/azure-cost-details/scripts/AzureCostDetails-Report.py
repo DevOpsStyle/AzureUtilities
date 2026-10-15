@@ -33,6 +33,8 @@ def main(
 
     api_version = "2023-03-01"  # Same version as the supplied Logic App.
     arm = "https://management.azure.com"
+    # ClientType identifies this caller to Cost Management, so it does not share the rate-limit bucket of anonymous callers.
+    client_type = "DevOpsStyle-AzureUtilities-CostDetails"
     deadline = time.monotonic() + max(0, min(int(max_wait_seconds), 840))
     state = {}
 
@@ -60,14 +62,18 @@ def main(
                         pass
         return max([1] + delays) if delays else 15
 
-    def paused(status, message):
+    def rate_limit(headers):
+        return {k.lower(): v for k, v in headers.items()
+                if k.lower() == "retry-after" or k.lower().startswith("x-ms-ratelimit-")}
+
+    def paused(status, message, **extra):
         return {
             "status": status, "subscription_id": sid,
             "period": {"start": state["start"], "end": state["end"]},
             "metric": state["metric"], "operation_url": state["url"],
             "retry_after_seconds": max(0, math.ceil(state["not_before"] - time.time())),
             "resume_state": json.dumps(state, separators=(",", ":")),
-            "message": message,
+            "message": message, **extra,
         }
 
     try:
@@ -119,7 +125,7 @@ def main(
             # Obtain/refresh the token inside main; do not read a different env variable.
             token = credential.get_token(arm + "/.default").token
             with requests.request(method, checked_url(url), headers={
-                "Authorization": "Bearer " + token, "Content-Type": "application/json"
+                "Authorization": "Bearer " + token, "Content-Type": "application/json", "ClientType": client_type
             }, timeout=(10, 30), allow_redirects=False, **kwargs) as response:
                 code, headers = response.status_code, response.headers
                 if code == 204:
@@ -128,7 +134,8 @@ def main(
                             "message": "Nessun dato restituito; non è una prova che il costo sia zero"}
                 if code in (429, 500, 502, 503, 504):
                     state["not_before"] = time.time() + retry_seconds(headers)
-                    return paused("retry", f"HTTP {code}; rispettare Retry-After")
+                    return paused("retry", f"HTTP {code}; rispettare Retry-After",
+                                  http_status=code, rate_limit=rate_limit(headers))
                 if code not in (200, 201, 202):
                     try:
                         err = response.json().get("error", {})

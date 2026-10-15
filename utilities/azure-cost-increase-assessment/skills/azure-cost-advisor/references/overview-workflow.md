@@ -72,7 +72,7 @@ Sizing gates. Stop and ask; never shorten silently.
 Cost comes only from the Cost Details tools. The read-only CLI channel rejects Cost Management POST requests: do not retry them through the CLI, and never through a write tool or a silent estimate.
 
 1. **Period**: the last three complete calendar months, unless the customer asks otherwise. Name the first and last day in the first answer. One report per subscription and calendar month: a period that crosses a month boundary needs one report for each month it touches. For another period, see "Other periods" at the end of this section.
-2. **ActualCost**: for each subscription with affected resources and each month, call `AzureCostDetails-Report` with `metric="ActualCost"`. Run up to 3 reports at a time. Tell the customer once that generation can take a few minutes.
+2. **ActualCost**: for each subscription with affected resources and each month, call `AzureCostDetails-Report` with `metric="ActualCost"`, one report at a time: start the next only after the previous is `ready` or `empty`. Azure rate-limits on-demand reports, and a throttled request means the others would be refused too (see "When billed cost is unavailable"). Tell the customer once that generation can take a few minutes.
 3. **Status handling** (details in skill `azure-cost-details`): `pending` or `retry` repeat with the same parameters and unchanged `resume_state`; `ready` continue; `empty` means no data, not zero cost; `error` follows "When something fails" in the skill.
 4. **Read every page** of every report: `AzureCostDetails-Read` with `view="resources"`, `page_size=200`, `offset=0`, then `next_offset` until `has_more` is false.
    - Confirm that the `returned_count` values of the pages add up to `total_items`. A report counts as read only then.
@@ -91,6 +91,25 @@ Cost comes only from the Cost Details tools. The read-only CLI channel rejects C
 | Resource absent from the report | No billed usage in the period | List it as unbilled and do not estimate it |
 
 7. **Keep** `operation_url`, `subscription_id`, month, and metric for the deep dive. Generate a new report only after `valid_till`, or when the reader says the link expired.
+
+### When billed cost is unavailable
+
+When a Cost Details request is throttled (HTTP 429, or a `retry` with a wait above 15 minutes), stop requesting reports for that subscription: the remaining months and the `AmortizedCost` report share the same limit. Do not send them, do not repeat the throttled request, and do not use another API or an estimate.
+
+Answer with the exposure only, from the Summary tail of section 1:
+
+```text
+Exposure overview: <subscription(s)>. The billed cost is not available yet: Azure is rate-limiting the Cost Details reports and asks to wait about <hours and minutes>. No amount is estimated.
+
+| Category | Rule | Increase | Region | Resources |
+
+<n> affected resources in total. The monthly and yearly impact needs the billed cost.
+You can ask me to resume in this thread after the wait, or choose a resource: I can already tell you which rule applies to it and why.
+```
+
+- Show only the groups with an increase above 0, at most 10 rows, and no money totals. Do not write a CSV of costs. If the customer wants the list of affected resources, the List tail gives it without cost, and it is labelled "exposure only, no billed cost".
+- Keep `resume_state` in the thread. After the wait, the customer asks to resume: call `AzureCostDetails-Report` with the same parameters and unchanged `resume_state`, then continue from step 2 for the remaining months, still one at a time.
+- A request without `resume_state`, including one from a new thread, is a new request and can be throttled again.
 
 ### Other periods
 

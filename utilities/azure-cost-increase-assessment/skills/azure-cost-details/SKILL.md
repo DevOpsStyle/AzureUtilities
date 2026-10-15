@@ -42,9 +42,11 @@ Use these exact tool names. They contain hyphens, never underscores.
    - A single report must stay within one calendar month.
    - Split longer periods into nonoverlapping calendar-month requests.
    - For large volumes, prefer nonoverlapping weeks or days.
+   - Generate one report at a time: start the next only after the previous one is `ready` or `empty`. Azure rate-limits on-demand reports (see "Rate limits").
 
 3. Handle the report status:
-   - For `pending` or `retry`, call `AzureCostDetails-Report` again with exactly the same parameters and unchanged `resume_state`.
+   - For `pending`, or for a `retry` that is not a rate limit, call `AzureCostDetails-Report` again with exactly the same parameters and unchanged `resume_state`.
+   - For a `retry` with `http_status` 429 (or a message that says HTTP 429), or whose `retry_after_seconds` is above 900, do not repeat the call: follow "Rate limits".
    - Never create a new report merely because the existing report is pending.
    - For `ready`, retain `operation_url` and continue to the reader.
    - For `empty`, report that Azure returned no data; do not infer zero cost.
@@ -72,7 +74,7 @@ Use these exact tool names. They contain hyphens, never underscores.
    - Monetary values are decimal strings and must not be multiplied again as unit prices.
 
 7. Handle reader status:
-   - For `pending` or `retry`, repeat the same call and pass the returned `not_before_unix`.
+   - For `pending` or `retry`, repeat the same call and pass the returned `not_before_unix`. If `http_status` is 429 or `retry_after_seconds` is above 900, follow "Rate limits" instead.
    - For `split_required`, create reports for smaller, nonoverlapping periods.
    - Combine split-period results by subscription, ResourceId, and currency, counting each period exactly once.
    - Keep unattributed costs in a separate group.
@@ -82,6 +84,18 @@ Use these exact tool names. They contain hyphens, never underscores.
    - Never present incomplete totals as complete.
    - If a single day exceeds the limits, explain that Azure Cost Management Exports or another external processing workflow is required.
    - Stop after three consecutive errors or 45 minutes of total waiting and identify the incomplete operation.
+
+## Rate limits
+
+Azure rate-limits on-demand Cost Details reports and returns how long to wait. Microsoft recommends generating a report for the same scope and period at most once per day: the data refreshes every four hours, so extra requests return the same data and can be throttled. The limit applies when Azure starts the report, before any blob is downloaded.
+
+- **Wait up to 900 seconds**: call the same tool again with unchanged parameters and `resume_state` (or `not_before_unix`). The tool waits by itself and sends no request before the wait ends.
+- **HTTP 429, or a wait above 900 seconds** (`http_status` 429 in the result, or a message that says HTTP 429): Azure refuses new reports for that subscription until the wait ends. Do not loop and do not wait inside the thread.
+  1. Stop every Cost Details request for that subscription, for all months and both metrics: they share the limit.
+  2. Tell the user how long to wait, in hours and minutes. If `rate_limit` is present, add one short line with the names of the headers that carry the wait, for support. Keep `resume_state` in the thread without showing it, so the user can ask you to resume here after the wait.
+  3. Never send a new report request for the same period to get around the wait. A request without `resume_state`, including one from a new thread, is a new request.
+  4. Never substitute another API (CLI, Query API) and never estimate the missing cost silently. State what is missing.
+- Do not generate a report again for a subscription, period, and metric already generated in the conversation: reuse its `operation_url` until `valid_till`.
 
 ## Output requirements
 

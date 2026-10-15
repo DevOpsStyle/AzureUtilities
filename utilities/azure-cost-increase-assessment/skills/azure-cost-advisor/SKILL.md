@@ -82,6 +82,7 @@ Offer what is natural next: another resource, related disks or services, or a di
 ## When something fails
 
 - **A tool is missing**: name it and say it must be created in Agent Canvas; see the plugin README.
+- **Cost Details throttled** (a `retry` whose message says HTTP 429, or a wait above 15 minutes): follow "Rate limits" in skill `azure-cost-details`. Stop requesting reports for that subscription and do not wait in the thread. Give the exposure-only answer described in [overview-workflow](./references/overview-workflow.md#when-billed-cost-is-unavailable) and say how long to wait: billed cost is the one thing an estimate cannot replace. A deep dive can still give the rule and the resource facts, saying that cost and commitment coverage need billing data.
 - **Cost Details unsupported or denied for a subscription** (for example offers other than EA or MCA): report `http_status` and `azure_code`, retry at most once, and mark that subscription as having no billed data. For virtual machines and managed disks only, a retail list-price scenario is allowed, labelled "hypothetical, not billed" and never presented as a forecast.
 - **`split_required`**: request smaller non-overlapping periods, as in skill `azure-cost-details`.
 - **Too large for the chat** (see the sizing gates in the overview workflow): offer a narrower scope or the local script `CostIncrease_Assessment_v6.ps1`.

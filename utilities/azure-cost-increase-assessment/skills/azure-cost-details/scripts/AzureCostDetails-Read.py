@@ -48,6 +48,9 @@ def main(
 
     import requests
 
+    # ClientType identifies this caller to Cost Management, so it does not share the rate-limit bucket of anonymous callers.
+    client_type = "DevOpsStyle-AzureUtilities-CostDetails"
+
     class LimitReached(Exception):
         pass
 
@@ -70,6 +73,10 @@ def main(
                     except (ValueError, TypeError):
                         pass
         return int(max([1] + delays)) + 1 if delays else 30
+
+    def rate_limit(headers):
+        return {k.lower(): v for k, v in headers.items()
+                if k.lower() == "retry-after" or k.lower().startswith("x-ms-ratelimit-")}
 
     class DecimalSum:
         def __init__(self):
@@ -116,14 +123,14 @@ def main(
                         "message": "Ripetere la stessa chiamata per continuare l'attesa"}
             time.sleep(min(60, remaining, not_before_unix - time.time()))
         token = credential.get_token("https://management.azure.com/.default").token
-        with requests.get(operation_url, headers={"Authorization": "Bearer " + token},
+        with requests.get(operation_url, headers={"Authorization": "Bearer " + token, "ClientType": client_type},
                           timeout=(10, 30), allow_redirects=False) as response:
             if response.status_code in (202, 429, 500, 502, 503, 504):
                 delay = retry_seconds(response.headers)
                 return {"status": "pending" if response.status_code == 202 else "retry",
                         "operation_url": operation_url, "http_status": response.status_code,
                         "retry_after_seconds": delay, "not_before_unix": int(time.time()) + delay + 1,
-                        "data_complete": False}
+                        "rate_limit": rate_limit(response.headers), "data_complete": False}
             if response.status_code != 200:
                 return {"status": "error", "http_status": response.status_code, "data_complete": False,
                         "message": "Impossibile leggere il report ARM; verificare permessi o scadenza"}

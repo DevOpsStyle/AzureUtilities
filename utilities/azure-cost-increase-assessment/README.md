@@ -281,11 +281,31 @@ If the agent skips a skill or a tool, open the tool calls of the thread to see w
 | Cost Details returns an authorization error | Assign `Cost Management Reader` on the subscription (step 1), wait for propagation, and check that ARM is enabled in the tool's **Identity** tab |
 | Cost Details returns another error for a subscription | The API supports EA and MCA only. The agent reports the error and does not estimate. For other offers use the local script `CostIncrease_Assessment_v6.ps1`, which uses the Cost Management Query API |
 | A tool returns `split_required` | The report is too large for one call: the agent asks for smaller, non-overlapping periods |
+| `AzureCostDetails-Report` returns HTTP 429 and a long wait (for example 1 to 2 hours) | Azure Cost Management is rate-limiting on-demand reports. The report was not created, so the blobs and the permissions are not the cause. The tool sends no request before the wait ends. Wait, then ask the agent to resume **in the same thread**. A new thread has no `resume_state` and sends a new request. See "Avoid the Cost Details rate limit" |
 | The agent says an in-chat calculation is not practical | More than 200 affected resources, or more than 600 cost records in one month. Narrow the scope (subscription, resource group, region, or category) or run the local script |
 | No CSV download link | Code execution is off: see step 5 |
 | The agent asks for approval on every tool call | Add the *Allow* rules in step 5 |
 | Reservation expiry is "not verified" | The identity lacks `Reservations Reader` (optional, step 1). The agent then points to Portal > Reservations |
 | The agent used the wrong dates for "last week" or "last month" | Give explicit dates, for example `from 8 to 14 October 2026`. The agent states the first and last day it used, so check them. It may not know today's date |
+
+### How the two tools get the costs
+
+1. `AzureCostDetails-Report` sends `POST /subscriptions/<id>/providers/Microsoft.CostManagement/generateCostDetailsReport?api-version=2023-03-01` with the managed identity and the body `{"metric": ..., "timePeriod": {"start": ..., "end": ...}}`. It then polls the `Location` URL, honoring `Retry-After`, until Azure returns the manifest with the blob links. This is the request that a Logic App HTTP action makes: the action follows the `Location` URL by itself, which is why its output already contains the manifest.
+2. `AzureCostDetails-Read` fetches the manifest again, downloads every CSV blob through its SAS link, aggregates the rows with a temporary database, and returns pages of JSON.
+
+The blob links contain a SAS token, so they are never returned to the agent: the reader takes them from the manifest on every call, and the agent only handles the `operation_url`. Because both tools make the same request as a Logic App, a Logic App gets the same rate limit.
+
+### Avoid the Cost Details rate limit
+
+Azure rate-limits on-demand reports of the Cost Details API (`generateCostDetailsReport`). When the limit is hit, Azure answers HTTP 429 with the time to wait, and the tools pass it on. The flow has two steps: `AzureCostDetails-Report` asks Azure to generate the report, and `AzureCostDetails-Read` downloads its CSV blobs. A 429 from the first tool means that Azure refused to generate the report, so nothing was created and nothing was downloaded. The reader can receive a 429 too, and the agent follows the same rules.
+
+- Microsoft recommends generating a report for the same scope and period at most once per day. Cost data refreshes every four hours, so more frequent requests return the same data and can be throttled. Microsoft also recommends caching cost data on your side, and Cost Management Exports for datasets above about 2 GB per month. These tools implement neither.
+- An overview asks for one report per month, 3 by default, and 3 more with `AmortizedCost` when reservations or savings plans appear. A new thread repeats them. Avoid repeating full overviews on the same subscription during testing, and stay in one thread: the agent reuses the reports it has already generated.
+- For tests, use a narrow period, such as one day or one week, and do not repeat an identical request.
+- Both tools send a `ClientType` header (`DevOpsStyle-AzureUtilities-CostDetails`) to Azure Resource Manager, and never to Blob Storage. A Microsoft answer on Microsoft Q&A about Cost Management 429 errors says that callers without it share one rate-limit bucket with all anonymous callers, and asks for one stable value. It is a mitigation, not a guarantee: Azure also limits per subscription and per tenant, and a wait of hours is more likely a limit of that kind.
+- On a 429 the result includes `rate_limit`: the `Retry-After` and `x-ms-ratelimit-*` headers that Azure sent. The name of the header that carries the wait (`entity`, `tenant`, `client`, or `qpu` in `x-ms-ratelimit-microsoft.costmanagement-<name>-retry-after`) shows which limit was reached. Keep it for support.
+- The agent generates one report at a time and stops all requests for the subscription at the first 429. In that case it gives the exposure overview (what is affected and by which rule) without any amount, and says how long to wait.
+- While waiting, do not start new threads on the same subscription. The local script `CostIncrease_Assessment_v6.ps1` uses a different API, the Cost Management Query API, with its own limits: it may still work, but this is not guaranteed.
 
 ### Choose another period
 
