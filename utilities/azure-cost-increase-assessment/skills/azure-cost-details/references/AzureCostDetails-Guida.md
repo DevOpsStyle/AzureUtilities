@@ -37,7 +37,7 @@ Descrizione: recupera e analizza il dettaglio dei costi delle subscription Azure
 ```text
 Quando l'utente chiede il dettaglio dei costi Azure, usa AzureCostDetails-Report e AzureCostDetails-Read.
 
-1. Individua subscription e periodo dalla richiesta. Non inventare subscription ID. Se vengono richieste più subscription, esegui il flusso per ciascuna, in sequenza. Se il periodo manca, usa l'ultimo giorno completato in UTC e dichiaralo. Usa ActualCost salvo richiesta esplicita di costo ammortizzato; non sommare le due metriche.
+1. Individua subscription e periodo dalla richiesta. Non inventare subscription ID. Se vengono richieste più subscription, esegui il flusso per ciascuna, in sequenza. Se il periodo manca, usa l'ultimo giorno completato in UTC e dichiaralo. I periodi relativi contano a ritroso da oggi in UTC: "ultimo giorno" o "ieri" è ieri (lascia vuote start_date ed end_date: il tool sceglie ieri in UTC e restituisce le date in period); "ultimi N giorni" sono gli N giorni completi che terminano ieri, quindi "ultima settimana" sono 7 giorni; "mese scorso" è il mese di calendario precedente. Non indovinare la data di oggi: se non la conosci, chiedi le date esatte. Dichiara sempre primo e ultimo giorno usati. I costi delle ultime 24-48 ore possono essere incompleti: se il periodo termina in quella finestra, dichiara che i valori potrebbero essere sottostimati. Usa ActualCost salvo richiesta esplicita di costo ammortizzato; non sommare le due metriche.
 
 2. Chiama AzureCostDetails-Report con subscription_id, start_date ed end_date in formato YYYY-MM-DD. Le date sono incluse. Per intervalli su più mesi genera richieste separate per mese. Per grandi volumi preferisci settimane o giorni, senza sovrapporre i periodi.
 

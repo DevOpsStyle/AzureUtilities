@@ -113,7 +113,7 @@ If the size does not match a documented family, apply "any other series" and say
 
 ## 4. Billing evidence
 
-1. **Report**: reuse the `operation_url` of the subscription and month from the overview. Otherwise generate it (`ActualCost`, the three complete months). If a savings plan appears, also use the `AmortizedCost` report of the same month.
+1. **Report**: reuse the `operation_url` of the subscription and period from the overview. Otherwise generate it (`ActualCost`, the same period as the overview: by default the three complete months, one report per month). If a savings plan appears, also use the `AmortizedCost` report of the same period.
 2. **Column names**, once per subscription: call `AzureCostDetails-Read` with `view="rows"`, `resource_id=<the resource ID>`, `page_size=1`, and read `available_columns`.
 3. **Rows**: for each month call `AzureCostDetails-Read` with `view="rows"`, the same `resource_id`, `page_size=200`, and `columns` limited to those of this list that exist in `available_columns`: Date, MeterCategory, MeterSubCategory, MeterName, Quantity, UnitOfMeasure, UnitPrice, EffectivePrice, CostInBillingCurrency, BillingCurrencyCode, PricingModel, ChargeType, ReservationId, ReservationName, ProductOrderId, Term, BenefitId, BenefitName. For a virtual machine also add `AdditionalInfo`.
 4. **Summarize in the sandbox** with these helpers. Paste the rows, never add them by hand.
@@ -173,7 +173,7 @@ def sku_changed(vm_size, rows):
     return {"current": current, "billed": sorted(billed), "possible_resize": bool(billed) and current not in billed}
 ```
 
-5. **Baseline** for the resource, as a monthly average over the months read: the sum of `cost` of the groups with `pricing_model == "OnDemand"`, `charge_type == "Usage"`, a `meter_category` in the profile scope, and `excluded_meter` false, divided by the number of months. When `SavingsPlan` groups exist, add the cost of those groups from the `AmortizedCost` report. A reservation group is not part of the baseline.
+5. **Baseline** for the resource, as a monthly figure over the period read: the sum of `cost` of the groups with `pricing_model == "OnDemand"`, `charge_type == "Usage"`, a `meter_category` in the profile scope, and `excluded_meter` false, divided by `months`, the value used for the overview (otherwise compute it with `months_in` of the [overview workflow](./overview-workflow.md#3-calculate-in-the-sandbox)). When `SavingsPlan` groups exist, add the cost of those groups from the `AmortizedCost` report. A reservation group is not part of the baseline. For a period shorter than a month the figure is a projection: label it as such.
 6. **Compare** the billed size with the current size (`sku_changed`) for a virtual machine, and flag a possible resize: the cost may not reflect the current size. The rule always follows the current size.
 7. **Deallocated VM** (`powerState` is `PowerState/deallocated`): compute is not billed while it stays stopped. Show the historical cost as a separate running-cost scenario, "if restarted at the historical level", and never as an expected bill. With no billed history, a list-price figure is allowed only as a hypothetical scenario (rules in skill `azure-cost-increase-assessment`, `references/assessment-rules.md`, "Retail list-price fallback"), labelled "hypothetical, not billed". The disks of that VM keep billing.
 8. **Missing data**: say plainly which months, meters, or columns were unavailable and what that changes.
@@ -213,7 +213,7 @@ Render in the customer's language and lead with the first line.
 ```text
 <name> - <category>, <region>, <size or SKU>
 Impact: <Affected | Not affected | Deferred | Partly affected> - <one sentence: the matched rule, the facts, the percentage>.
-Cost: <today>/month -> <after>/month from <date> (+<delta>/month, about +<delta_year>/year). Basis: <months, metric, meters counted>.
+Cost: <today>/month -> <after>/month from <date> (+<delta>/month, about +<delta_year>/year). Basis: <period (a projection when shorter than a month), metric, meters counted>.
 Commitments: <none | reservation <name> covering <x>%, expires <date or "not verified"> | savings plan <name>>.
 Related resources: <attached disks, with cost and increase if the customer asked>.
 To check: <resize signal, deallocated scenario, unattached state, missing data, assumptions about future usage>.
@@ -235,7 +235,7 @@ Offer only options derived from the facts, never a promised saving, and never a 
 For a resource outside the profile, or when the customer asks only about cost:
 
 1. Read its rows (section 4, steps 1 to 3) and summarize with `breakdown`.
-2. Report the monthly average, the split by meter category and subcategory, and the share by pricing model.
+2. Report the total of the period and, for whole months, the monthly average; give the split by meter category and subcategory and the share by pricing model.
 3. Show the daily trend: sum `CostInBillingCurrency` by `Date` in the sandbox and name the 3 highest days with their difference from the median.
 4. Report commitment coverage (section 5) and any `EffectivePrice` versus `UnitPrice` gap.
 5. State that no known price increase applies to this type under the active profile, and offer the related resources.

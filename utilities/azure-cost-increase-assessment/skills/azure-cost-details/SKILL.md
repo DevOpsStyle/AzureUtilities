@@ -32,6 +32,9 @@ Use these exact tool names. They contain hyphens, never underscores.
 1. Determine the subscription and period from the request. Never invent a subscription ID.
    - For multiple subscriptions, run this workflow for each subscription sequentially.
    - If no period is supplied, use the last completed UTC day and state that choice.
+   - Relative periods count back from today in UTC: "last day" or "yesterday" is yesterday; "last N days" is the N complete days ending yesterday, so "last week" is 7 days; "last month" is the previous calendar month; "this month" runs from the 1st to yesterday. State the exact first and last day so the user can correct them.
+   - For "last day", leave `start_date` and `end_date` empty: the tool selects yesterday in UTC and returns the dates in `period`. For any other relative period, never guess today's date: if it is not available, ask for explicit dates.
+   - Costs of the last 24 to 48 hours can still be incomplete. When the period ends in that window, say that the figures may be understated.
    - Use `ActualCost` unless the user explicitly requests amortized cost.
    - Never add `ActualCost` and `AmortizedCost` together.
 

@@ -53,7 +53,7 @@ Activate these skills when this one points to them: `azure-cost-details` for the
 Ask only for what is missing and cannot be discovered.
 
 - **Subscription**: the one established in the conversation; otherwise discover the accessible ones with Resource Graph and ask which to analyse when there are several.
-- **Period**: the last three complete calendar months, with the exact first and last day. State the subscription and the period in the first answer.
+- **Period**: the last three complete calendar months by default, with the exact first and last day. If the customer asks for another period (the last day, the last 7 days, named dates), use it and follow ["Other periods"](./references/overview-workflow.md#other-periods). State the subscription and the period in the first answer.
 - **Rules**: the known profile when the customer mentions the 1 February 2027 changes or names no other announcement. Say which profile you apply.
 - **Metric**: `ActualCost` for every month, plus `AmortizedCost` for the same months whenever reservation or savings-plan usage appears. Read every page of every report.
 

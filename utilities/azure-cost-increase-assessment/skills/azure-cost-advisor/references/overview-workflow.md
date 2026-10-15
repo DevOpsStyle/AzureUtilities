@@ -71,7 +71,7 @@ Sizing gates. Stop and ask; never shorten silently.
 
 Cost comes only from the Cost Details tools. The read-only CLI channel rejects Cost Management POST requests: do not retry them through the CLI, and never through a write tool or a silent estimate.
 
-1. **Period**: the last three complete calendar months, unless the customer asks otherwise. Name the first and last day in the first answer. One report per subscription and month.
+1. **Period**: the last three complete calendar months, unless the customer asks otherwise. Name the first and last day in the first answer. One report per subscription and calendar month: a period that crosses a month boundary needs one report for each month it touches. For another period, see "Other periods" at the end of this section.
 2. **ActualCost**: for each subscription with affected resources and each month, call `AzureCostDetails-Report` with `metric="ActualCost"`. Run up to 3 reports at a time. Tell the customer once that generation can take a few minutes.
 3. **Status handling** (details in skill `azure-cost-details`): `pending` or `retry` repeat with the same parameters and unchanged `resume_state`; `ready` continue; `empty` means no data, not zero cost; `error` follows "When something fails" in the skill.
 4. **Read every page** of every report: `AzureCostDetails-Read` with `view="resources"`, `page_size=200`, `offset=0`, then `next_offset` until `has_more` is false.
@@ -92,14 +92,25 @@ Cost comes only from the Cost Details tools. The read-only CLI channel rejects C
 
 7. **Keep** `operation_url`, `subscription_id`, month, and metric for the deep dive. Generate a new report only after `valid_till`, or when the reader says the link expired.
 
+### Other periods
+
+The three months are only the default. When the customer asks for another period, such as the last day, the last 7 days, or two named dates, use it for the reports, the deep dive, and the CSV.
+
+- **Dates**: apply the relative-period rules of skill `azure-cost-details`, state the exact first and last day, and split by calendar month: one report per subscription and month.
+- **Normalize**: `overview` divides every cost by `months`. Compute it with `months_in(periods)` of the code below, passing the `(first day, last day)` of every report. A whole calendar month counts as 1 and any other span counts `days x 12 / 365`, so 7 days are about 0.23 months. Never pass the number of reports for a partial month: that shows a week of cost as a monthly cost.
+- **Label**: a period that is not made of whole months gives a **projection**, not an observed month. It assumes that the observed days repeat all month, and it is sensitive to weekends, one-off charges, and resources started or stopped in the period. Say so in the answer and pass `note` to `write_csv`.
+- **Recent days**: costs of the last 1 to 2 days can be incomplete, so the figures may be understated. Say so when the period ends in that window. `empty` means no data yet, not zero cost.
+
 ## 3. Calculate in the sandbox
 
-Never add or multiply these numbers by hand. Paste the rows of the Resource Graph list query as `exposure` and the `records` of every page read as `costs` (all months together, only the records of the affected resources), then run:
+Never add or multiply these numbers by hand. Paste the rows of the Resource Graph list query as `exposure` and the `records` of every page read as `costs` (all reports together, only the records of the affected resources), then run:
 
 ```python
+import calendar
 import csv
 import json
 from collections import defaultdict
+from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 
 D = Decimal
@@ -131,6 +142,18 @@ NOTES = {
 
 def cents(value):
     return D(value).quantize(D("0.01"), rounding=ROUND_HALF_UP)
+
+
+def months_in(periods):
+    """Months covered by inclusive ISO (first, last) day pairs, one pair per report.
+    A whole calendar month counts as 1; any other span counts days x 12 / 365."""
+    total = D(0)
+    for start, end in periods:
+        first, last = date.fromisoformat(start), date.fromisoformat(end)
+        whole = ((first.year, first.month) == (last.year, last.month) and first.day == 1
+                 and last.day == calendar.monthrange(last.year, last.month)[1])
+        total += D(1) if whole else D((last - first).days + 1) * 12 / 365
+    return total
 
 
 def build_row(res, currency, item, months, period_start, amortized):
@@ -248,10 +271,10 @@ def overview(exposure, costs, months=1, period_start="", amortized=None, top=5):
     return summary, rows
 
 
-def write_csv(rows, path, disclaimer=True):
+def write_csv(rows, path, disclaimer=True, note=""):
     with open(path, "w", newline="", encoding="utf-8") as handle:
         if disclaimer:
-            for line in DISCLAIMER:
+            for line in DISCLAIMER + ([note] if note else []):
                 handle.write('"' + line.replace('"', '""') + '"\r\n')
             handle.write("\r\n")
         writer = csv.DictWriter(handle, fieldnames=COLUMNS)
@@ -279,16 +302,19 @@ def verify_csv(path, summary):
     return {"rows": len(data), "totals": {c: [str(v[0]), str(v[1])] for c, v in sums.items()}, "problems": problems}
 ```
 
-Run it like this, passing `months` (the number of monthly reports summed into `costs`) and `period_start` (the first day of the first month):
+Run it like this, passing `months` (from `months_in`) and `period_start` (the first day of the period):
 
 ```python
-summary, rows = overview(exposure, costs, months=3, period_start="2026-07-01", amortized=amortized)
-write_csv(rows, "/mnt/data/azure_price_increase_impact.csv")
+periods = [("2026-07-01", "2026-07-31"), ("2026-08-01", "2026-08-31"), ("2026-09-01", "2026-09-30")]  # one pair per report
+months = months_in(periods)
+note = "" if months == len(periods) else "Monthly values are projected from the observed days at constant consumption."
+summary, rows = overview(exposure, costs, months=months, period_start=periods[0][0], amortized=amortized)
+write_csv(rows, "/mnt/data/azure_price_increase_impact.csv", note=note)
 print(verify_csv("/mnt/data/azure_price_increase_impact.csv", summary))
 print(json.dumps(summary, default=str, indent=2))
 ```
 
-- `base` is the average monthly billed cost (the summed months divided by `months`), `delta` is `base x pct / 100`, and the annual figure is the monthly figure times 12. Every row is rounded to the cent, and the totals add the rounded rows, so the file and the summary match exactly.
+- `base` is the monthly billed cost: the summed cost divided by `months`, so an average for whole months and a projection for any other period. `delta` is `base x pct / 100`, and the annual figure is the monthly figure times 12. Every row is rounded to the cent, and the totals add the rounded rows, so the file and the summary match exactly.
 - Share the CSV only when `problems` is empty: the file exists, has one row per result, and its totals per currency equal the summary. Otherwise fix the cause first. Save the file with the code tool (the Python tool docs use `/mnt/data`) and confirm that it exists before giving the download link.
 - Rows with `upper_bound` (storage accounts, Azure NetApp Files, Elastic SAN) are labelled as an upper bound: the excluded meters can be split only in the deep dive.
 - A currently deallocated VM with historical billing is a **scenario**, reported in `scenario_deallocated` and never added to the totals. A resource with no billed usage appears in the CSV with `CostSource` `None` and no amounts.
@@ -299,7 +325,7 @@ print(json.dumps(summary, default=str, indent=2))
 Render in the customer's language. Keep it short: one table row per category and a shortlist of 5.
 
 ```text
-Overview: <subscription(s)>, <first day> to <last day> (3 complete months), billed cost (ActualCost[ and AmortizedCost], <currency>)
+Overview: <subscription(s)>, <first day> to <last day> (<3 complete months | n days>), billed cost (ActualCost[ and AmortizedCost], <currency>)
 With the change effective <date>, the affected resources go from <today>/month to <after>/month: +<delta>/month, about +<delta_year>/year.
 
 | Category | Resources | Today/month | After/month | Difference/month |
@@ -313,6 +339,7 @@ Not included in those totals:
 - <n> affected resources with no billed usage in the period.
 To verify: <each remaining flag with its resource count and amount; for example unattached disks, reservation-covered usage, savings plans, Spot, upper-bound storage>
 Estimate from past billed cost; it assumes constant consumption and depends on your commercial agreement and commitments.
+[Only for a period shorter than a month] Projected from <n> days, not an observed month.[ The latest days may be incomplete, so the figures may be understated.]
 Full per-resource detail: <download link to the CSV>
 
 Which resource should I look into? The 5 with the largest increase:
@@ -322,7 +349,7 @@ You can also give me a name, a resource ID, a category, a region, or a resource 
 
 ## 5. General cost overview (no price change)
 
-1. Request `AzureCostDetails-Report` (`ActualCost`) for each subscription in scope, for the last three complete months or the period asked.
-2. For each month call `AzureCostDetails-Read` with `view="resources"`, `page_size=10`, `offset=0`. Use `totals_by_currency` for the monthly total and `records` for the top 10. Derive the resource type from the segment after `/providers/` in the resource ID.
-3. Answer with the monthly average per currency, the top 10 (name, type, average cost, share of the total, pricing models), the unattributed bucket when present, and the period stated explicitly.
+1. Request `AzureCostDetails-Report` (`ActualCost`) for each subscription in scope, for the last three complete months or the period asked (one report per calendar month).
+2. For each report call `AzureCostDetails-Read` with `view="resources"`, `page_size=10`, `offset=0`. Use `totals_by_currency` for the total of the report and `records` for the top 10. Derive the resource type from the segment after `/providers/` in the resource ID.
+3. Answer with the total per currency for the period and, for whole months, the monthly average; the top 10 (name, type, cost, share of the total, pricing models); the unattributed bucket when present; and the period stated explicitly. Do not project a month from a shorter period unless the customer asks, and then label it as a projection.
 4. Offer a deep dive on one resource, or the impact of an announced price change on the same resources.

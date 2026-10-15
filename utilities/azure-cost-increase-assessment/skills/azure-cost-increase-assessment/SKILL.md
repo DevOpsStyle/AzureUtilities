@@ -29,7 +29,7 @@ Capture these values from the request:
 | Input | Default | Rule |
 |---|---|---|
 | Scope | All subscriptions accessible to the agent | Honor a narrower subscription or resource-group scope when supplied |
-| Cost months | 3 | Use complete past calendar months only |
+| Cost months | 3 | Whole past calendar months. For another period, such as the last 7 days, follow "Other periods" in the skill `azure-cost-advisor` (`references/overview-workflow.md`): the result is then a projection |
 | Fallback currency | Billing currency when known | Used only for Azure Retail Prices fallback |
 | List-price fallback | Enabled | Disable when the user requests billed data only |
 | Assumed legacy Blob Storage exclusions | Disabled | Enable only when explicitly requested |
@@ -89,7 +89,7 @@ Before reporting:
 1. Confirm every result has a positive expected increase percentage.
 2. Confirm v1/v2 and regional percentages were not stacked.
 3. Confirm Intel v7 exclusions were applied.
-4. Confirm each Cost Management row was divided by the number of assessed months.
+4. Confirm each Cost Management row was divided by the number of assessed months (`months_in` for a period that is not made of whole months).
 5. Confirm monthly increase equals baseline multiplied by the percentage.
 6. Confirm annual increase equals monthly increase multiplied by 12.
 7. Confirm totals are grouped by currency.

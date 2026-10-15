@@ -285,6 +285,23 @@ If the agent skips a skill or a tool, open the tool calls of the thread to see w
 | No CSV download link | Code execution is off: see step 5 |
 | The agent asks for approval on every tool call | Add the *Allow* rules in step 5 |
 | Reservation expiry is "not verified" | The identity lacks `Reservations Reader` (optional, step 1). The agent then points to Portal > Reservations |
+| The agent used the wrong dates for "last week" or "last month" | Give explicit dates, for example `from 8 to 14 October 2026`. The agent states the first and last day it used, so check them. It may not know today's date |
+
+### Choose another period
+
+The last three complete calendar months are only the default. Ask for another period in plain language: the agent passes the dates to the tools on every call, and nothing needs to be reinstalled.
+
+| You ask | What the agent does |
+|---|---|
+| `Show the costs of the last day` | One report for yesterday, in UTC |
+| `Use the last 7 days` | The 7 complete days ending yesterday: one report, or two when they cross a month boundary |
+| `Use 1 to 15 October 2026` | One report for those dates |
+| `Use the last 6 months` | One report for each calendar month |
+
+- **One calendar month per report.** The tool rejects a period that crosses a month boundary, so the agent splits it and combines the results. It states the exact first and last day it used.
+- **Recent days can be incomplete.** Costs of the last 24 to 48 hours may still be arriving, so a figure for yesterday can be understated. `empty` means no data yet, not zero cost.
+- **The price-increase figures become projections** for a period shorter than a month. The monthly and yearly amounts assume that the observed days repeat all month (a month is counted as 30.4 days) and are labelled as projections, with a note in the CSV. They are sensitive to weekends and one-off charges, so prefer whole months for a figure you want to rely on.
+- **Plain cost questions** (no price increase) report the total of the period as it is, without projecting.
 
 ### What to expect
 
