@@ -42,6 +42,8 @@ Do not stack the 25% v1/v2 increase with a regional increase.
 | `southeastasia` | 8% |
 | All other regions | 0% |
 
+The regional notice names `northeurope` "EU North (Dublin)" and `westeurope` "EU West (Amsterdam)". Treat each pair of names as the same region.
+
 ## Storage scope
 
 In affected regions, include:
@@ -69,7 +71,7 @@ Exclude on-demand cost rows whose meter subcategory contains, case-insensitively
 - `Tables`
 - `Transaction Optimized`
 
-These patterns also exclude names with a `v2` suffix. Exclude meter subcategories beginning with `Blob Storage` only when the user explicitly enables the assumed legacy Blob Storage exclusions.
+These patterns also exclude names with a `v2` suffix. The notice lists only the excluded services, not the affected ones: treat every other billed meter of these resource types as affected and say that this is an interpretation. Exclude meter subcategories beginning with `Blob Storage` only when the user explicitly enables the assumed legacy Blob Storage exclusions.
 
 ## Cost Management aggregation
 
@@ -113,7 +115,7 @@ Choose one source in this order:
    - `CostSource = None`
    - leave `BaseMonthlyCost` and increase values empty
 
-Reserved Instance-covered usage is excluded until reservation expiry. Savings Plan usage is included because it reflects the new underlying rates.
+Reserved Instance-covered usage is excluded: the price changes when the reservation expires. Savings Plan usage is included: the covered VMs cost more, so the commitment is consumed sooner.
 
 ```text
 EstimatedMonthlyIncrease = round(BaseMonthlyCost * ExpectedIncreasePct / 100, 2)

@@ -16,7 +16,12 @@ A profile is the set of rules that decides which resources an announcement affec
 
 ## Known profile: VM and storage price changes effective 1 February 2027
 
-Source: the Azure notifications on VM lifecycle and on regional pricing updates, as implemented by `CostIncrease_Assessment_v6.ps1`. The authoritative copy of the rules, regular expressions, and retail fallback is the skill `azure-cost-increase-assessment` (`references/assessment-rules.md`). Keep both in sync.
+Source: two Azure notices that take effect on 1 February 2027, as implemented by `CostIncrease_Assessment_v6.ps1`:
+
+- the VM lifecycle, retirements and pricing update of 28 September 2026: about +25%, worldwide, for the v1 and v2 series;
+- the regional pricing update, "Action required: Prepare for specific Azure VM series and Azure Storage service price updates in seven Azure regions globally": +8% to +17% for VMs and Storage in seven regions, except the series and services it excludes (the v1, v2, and v7 series listed below, and the Storage services listed below).
+
+The authoritative copy of the rules, regular expressions, and retail fallback is the skill `azure-cost-increase-assessment` (`references/assessment-rules.md`). Keep both in sync.
 
 - **Effective date:** 1 February 2027.
 - **Scope:** virtual machines and scale sets; managed disks, disk snapshots, storage accounts, Azure NetApp Files capacity pools, and Elastic SAN.
@@ -40,15 +45,17 @@ Regional percentages, which also apply to storage:
 | `westeurope`, `norwayeast`, `norwaywest` | 9% |
 | `southeastasia` | 8% |
 
-Storage services increase by the regional percentage in those regions only. These billed meter subcategories are excluded, case-insensitively and including `v2` variants: Container Storage, Managed Lustre, Cross Region Replication, Blob Features, Change Feed, General Block Blob, Import/Export, Queues, Standard Page Blob, Storage Actions, Bandwidth, Storage Discovery, Tables, Transaction Optimized. Legacy `Blob Storage` meters are excluded only when the customer asks for that assumption.
+The regional notice names `northeurope` "EU North (Dublin)" and `westeurope` "EU West (Amsterdam)". Treat each pair of names as the same region.
+
+Storage services increase by the regional percentage in those regions only. The notice lists only the excluded services, not the affected ones: treat every other billed meter of the in-scope resource types as affected, and say that this is an interpretation of the notice. These billed meter subcategories are excluded, case-insensitively and including `v2` variants: Container Storage, Managed Lustre, Cross Region Replication, Blob Features, Change Feed, General Block Blob, Import/Export, Queues, Standard Page Blob, Storage Actions, Bandwidth, Storage Discovery, Tables, Transaction Optimized. Legacy `Blob Storage` meters are excluded only when the customer asks for that assumption.
 
 Commitments:
 
 | Pricing model | Treatment |
 |---|---|
 | Pay-as-you-go, EA, or MCA on demand | Affected from the effective date |
-| Savings plan | Affected from the effective date: covered usage reflects the new underlying rates |
-| Reservation | Not affected until the reservation expires. The covered part then becomes pay-as-you-go and is affected |
+| Savings plan | Affected from the effective date: the covered VMs cost more, so the commitment is consumed sooner |
+| Reservation | Not affected until the reservation expires: the price changes at expiry, so the covered part is affected from then on |
 | Spot | Not addressed by the announcement. Never estimate it |
 
 Baseline: billed on-demand cost of the counted meters, plus savings-plan cost, excluding reservation-covered usage. Estimates assume the historical consumption stays constant.

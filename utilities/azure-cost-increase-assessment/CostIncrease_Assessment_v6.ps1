@@ -12,14 +12,18 @@
 # regional pricing updates):
 #  - v1 series (Bv1, D, Ds, F, Fs, G, Gs, L/Ls, NP, HC/HCS) and v2 series
 #    (Av2, Amv2, Dv2, Dsv2, Fsv2, Lsv2): +25% in ANY region (PAYG, EA, MCA)
-#  - Regional increase on specific VMs and Storage services in 7 regions:
+#  - Regional increase on specific VMs and Storage services in 7 regions
+#    (the notice names West Europe "EU West" and North Europe "EU North"):
 #    West Europe 9%, North Europe 17%, France Central 11%, France South 11%,
 #    Norway East 9%, Norway West 9%, Southeast Asia 8%
 #  - Excluded from the regional increase: the v1/v2 series above and
 #    Intel v7 (Dsv7, Ddsv7, Dlsv7, Dldsv7, Esv7, Edsv7)
+#  - The notice lists only the exclusions: every other VM series and Storage
+#    service in the 7 regions is treated as affected
 #  - The two increases never stack on the same VM
-#  - Reserved Instances: price locked until the RI expires
-#  - Savings Plans: covered usage reflects the new underlying rates
+#  - Reserved Instances: not affected, the price changes when the RI expires
+#  - Savings Plans: affected; the covered VMs cost more, so the commitment is
+#    consumed sooner
 #  - Only meters in the 'Virtual Machines' and 'Storage' categories are
 #    considered (e.g. Microsoft Defender charges on the same resource are ignored)
 #
@@ -272,7 +276,7 @@ function Get-DiskListMonthly($d) {
 # =====================================================================
 # Row builder
 # Base = OnDemand (subject meters) + Savings Plan amortized cost.
-# Reserved Instance cost is excluded (locked until the RI expires).
+# Reserved Instance cost is excluded (the price changes when the RI expires).
 # List price is used only when there is no billed usage in the period.
 # =====================================================================
 function New-Row($cat, $r, $sku, $qty, $os, $state, $regime, $pct, $listMonthly, $notes) {
@@ -309,7 +313,7 @@ function New-Row($cat, $r, $sku, $qty, $os, $state, $regime, $pct, $listMonthly,
     if ($c -and $cmBase -gt 0) {
         $source = 'Cost Management (OnDemand + Savings Plan)'
         $base = [math]::Round($cmBase, 2)
-        if ($spMonthly -gt 0) { $notes += "Includes Savings Plan cost: Savings Plans reflect the new underlying rates" }
+        if ($spMonthly -gt 0) { $notes += "Includes Savings Plan cost: the covered VMs cost more, so the Savings Plan is consumed sooner" }
         if ($riPct -gt 0)     { $notes += "Part of usage covered by Reserved Instances ($riPct%): excluded until the reservation expires" }
         if ($onDemand -gt $subject) { $notes += "Billed meters excluded from the increase are not included in the base" }
     }

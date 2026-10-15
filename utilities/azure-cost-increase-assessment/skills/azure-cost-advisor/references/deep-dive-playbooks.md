@@ -183,7 +183,7 @@ def sku_changed(vm_size, rows):
 | Evidence in the rows | Rule |
 |---|---|
 | No `Reservation` or `SavingsPlan` rows | The increase starts on the effective date |
-| `SavingsPlan` rows | The increase applies from the effective date: covered usage reflects the new underlying rates. Name the plan (`BenefitName`); no expiry lookup is needed |
+| `SavingsPlan` rows | The increase applies from the effective date: the covered VMs cost more, so the commitment is consumed sooner. Name the plan (`BenefitName`); no expiry lookup is needed |
 | `Reservation` rows | The increase on the reserved part is deferred until the reservation expires |
 | `Spot` rows | Not addressed by the announcement. No estimate |
 

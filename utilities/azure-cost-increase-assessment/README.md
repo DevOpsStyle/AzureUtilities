@@ -301,6 +301,15 @@ The local PowerShell script remains the reference implementation for interactive
 
 ## 3. Pricing rules applied
 
+The rules come from two Microsoft notices that take effect on **1 February 2027**:
+
+| Notice | Effect |
+|---|---|
+| Azure VM lifecycle, retirements and pricing updates (28 September 2026) | About **+25%**, worldwide, for the v1 and v2 VM series |
+| Regional pricing update: *Action required: Prepare for specific Azure VM series and Azure Storage service price updates in seven Azure regions globally* | **+8% to +17%** for VMs and Storage in seven Azure regions, except the VM series and Storage services the notice excludes |
+
+The regional notice excludes the v1, v2, and v7 series listed in 3.1, so the two increases never overlap. The notice lists only what is **excluded**. The script and the plugin therefore treat every other VM series, and every other Storage service of the analysed resource types, in the seven regions as affected. The notice does not list the affected ones, so confirm borderline cases with your Microsoft account team.
+
 ### 3.1 Virtual machines
 
 Each VM gets **one regime only**. The two increases never stack.
@@ -322,11 +331,13 @@ Each VM gets **one regime only**. The two increases never stack.
 | Norway East, Norway West | +9% |
 | Southeast Asia (Singapore) | +8% |
 
+The notice names North Europe *EU North (Dublin)* and West Europe *EU West (Amsterdam)*. In Azure Resource Graph and the Azure CLI they are `northeurope` and `westeurope`.
+
 ### 3.3 Storage
 
 The regional increase also applies to specific Azure Storage services in the 7 regions. Resources analysed: Managed Disks, disk snapshots, Storage Accounts, Azure NetApp Files capacity pools, Elastic SAN.
 
-Billed meters belonging to these excluded services are removed from the cost baseline: Azure Container Storage, Azure Managed Lustre, Azure NetApp Files – Cross Region Replication SKU, Blob Features, Change Feed, General Block Blob, Import/Export, Queues, Queues v2, Standard Page Blob, Storage Actions, Storage Bandwidth, Storage Discovery, Tables, Transaction Optimized SKU. Matching also covers "v2" variants of these names (for example *General Block Blob v2*).
+The notice excludes the following Azure Storage services from the regional increase, so their billed meters are removed from the cost baseline: Azure Container Storage, Azure Managed Lustre, Azure NetApp Files – Cross Region Replication SKU, Blob Features, Change Feed, General Block Blob, Import/Export, Queues, Queues v2, Standard Page Blob, Storage Actions, Storage Bandwidth, Storage Discovery, Tables, Transaction Optimized SKU. Matching also covers "v2" variants of these names (for example *General Block Blob v2*).
 
 ### 3.4 Only VM and Storage charges
 
@@ -337,8 +348,8 @@ Only billed meters in the **Virtual Machines** and **Storage** categories are co
 | Pricing model | Affected from 1 Feb 2027? | How the script treats it |
 |---|---|---|
 | Pay-as-you-go / EA / MCA on-demand | Yes | Included in the baseline |
-| Savings Plan | Yes: covered usage reflects the new underlying rates | Included in the baseline |
-| Reserved Instance | No, until the reservation expires | Excluded from the baseline |
+| Savings Plan | Yes: the covered VMs cost more, so the commitment is consumed sooner | Included in the baseline |
+| Reserved Instance | No: the price changes when the reservation expires | Excluded from the baseline |
 | Spot | Not addressed | Not included |
 
 ---
