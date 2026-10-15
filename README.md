@@ -8,7 +8,7 @@ A growing collection of practical, reusable utilities for assessing, operating, 
 
 | Utility | Purpose | Azure SRE Agent | Download |
 |---|---|---|---|
-| [Azure Cost Increase Assessment](./utilities/azure-cost-increase-assessment/) | Inventories affected Azure compute and storage resources and estimates the monthly and annual impact of the price changes effective 1 February 2027. | [Install-from-URL instructions](./utilities/azure-cost-increase-assessment/#azure-sre-agent-plugin) | [Download ZIP](./downloads/Azure-Cost-Increase-Assessment-v6.zip) |
+| [Azure Cost Increase Assessment](./utilities/azure-cost-increase-assessment/) | Inventories affected Azure compute and storage resources, estimates the February 2027 price impact, and includes Azure SRE tools for detailed per-resource costs. | [Plugin and Python tool instructions](./utilities/azure-cost-increase-assessment/#azure-sre-agent-plugin) | [Download ZIP](./downloads/Azure-Cost-Increase-Assessment-v6.zip) |
 
 ## Quick start
 
@@ -39,6 +39,13 @@ AzureUtilities/
         |-- media/
         |   `-- regional-and-vm-price-increases-demo.gif
         `-- skills/
+            |-- azure-cost-details/
+            |   |-- SKILL.md
+            |   |-- references/
+            |   |   `-- AzureCostDetails_Guida.md
+            |   `-- scripts/
+            |       |-- AzureCostDetails_Read.py
+            |       `-- AzureCostDetails_Report.py
             `-- azure-cost-increase-assessment/
                 |-- SKILL.md
                 `-- references/

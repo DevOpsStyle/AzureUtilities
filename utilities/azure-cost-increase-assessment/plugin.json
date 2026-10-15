@@ -1,6 +1,6 @@
 {
   "name": "azure-cost-increase-assessment",
-  "description": "Assess the estimated impact of Azure compute and storage price increases effective 1 February 2027 by using read-only Azure SRE Agent tools, Cost Management data, and Azure Retail Prices fallback.",
+  "description": "Assess Azure price increases and retrieve complete Azure Cost Details reports by resource or billing row through two read-only Azure SRE Agent skills.",
   "skills": [
     "skills/"
   ]

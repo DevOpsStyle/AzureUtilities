@@ -56,7 +56,14 @@ The script analyses every subscription in the tenant that the signed-in user can
 
 ## Azure SRE Agent plugin
 
-This folder is also a standalone Azure SRE Agent plugin. It imports the `azure-cost-increase-assessment` skill, which applies the same pricing rules through the agent's built-in read-only Azure tools and sandboxed code execution. It does not change Azure resources and does not require PowerShell in the SRE sandbox.
+This folder is also a standalone Azure SRE Agent plugin. It imports two read-only skills:
+
+| Skill | Purpose |
+|---|---|
+| `azure-cost-increase-assessment` | Applies the February 2027 price-increase rules and estimates monthly and annual impact |
+| `azure-cost-details` | Generates complete Cost Details reports and reads every returned CSV blob, with resource summaries or original billing rows |
+
+The Cost Details skill uses two Python tools that must be created manually in Agent Canvas before use. The plugin distributes their source and orchestration instructions but Azure SRE Agent does not create Python tools from `plugin.json`.
 
 ### SRE prerequisites
 
@@ -64,6 +71,18 @@ This folder is also a standalone Azure SRE Agent plugin. It imports the `azure-c
 - **SRE Agent Author** or **Administrator** role on the agent
 - The **Plugins** page under **Builder**
 - **Reader** and **Cost Management Reader** assigned to the SRE Agent managed identity for the subscriptions to assess
+
+### Create the Cost Details Python tools
+
+Create these tools before installing or updating the plugin so the `azure-cost-details` skill can resolve both tool names:
+
+1. Follow the complete [Azure Cost Details setup guide](./skills/azure-cost-details/references/AzureCostDetails_Guida.md).
+2. In **Builder > Agent Canvas**, create a Python tool named exactly `AzureCostDetails_Report` and paste [its source](./skills/azure-cost-details/scripts/AzureCostDetails_Report.py).
+3. Create a second Python tool named exactly `AzureCostDetails_Read` and paste [its source](./skills/azure-cost-details/scripts/AzureCostDetails_Read.py).
+4. For both tools, enable **Azure Resource Manager / ARM** in the **Identity** tab and set the timeout to **900 seconds**.
+5. Test both tools with the playground inputs in the setup guide.
+
+The tools use the Azure SRE Agent managed identity. They do not contain a client ID, token, storage key, or SAS. The report reader downloads the SAS-protected blobs returned by Azure and never forwards the ARM token to Blob Storage.
 
 ### Install from this repository
 
@@ -82,8 +101,9 @@ The plugin is stored in a subfolder of this repository. Enter the repository and
 4. Enter `DevOpsStyle/AzureUtilities` in **GitHub repository URL**.
 5. Enter `utilities/azure-cost-increase-assessment` in **Path in repo**.
 6. Leave credentials empty for this public repository. If it is made private, expand **Advanced** and provide a GitHub personal access token with read access.
-7. Select **Install** and wait for `Plugin installed from URL successfully with 1 skill`.
-8. Open **Builder > Skill builder** or **Agent Canvas** and verify that `azure-cost-increase-assessment` is listed.
+7. Select **Install** and wait for `Plugin installed from URL successfully with 2 skills`.
+8. Open **Builder > Skill builder** or **Agent Canvas** and verify that both `azure-cost-increase-assessment` and `azure-cost-details` are listed.
+9. Open `azure-cost-details` and confirm that `AzureCostDetails_Report` and `AzureCostDetails_Read` are attached. If they are not, use **Choose tools** to attach them and save the skill.
 
 The plugin appears in the Plugins grid with the **Standalone** badge. Azure SRE Agent pins the installation to the current Git commit, so repository updates are not applied automatically. Update or reinstall the plugin to load a newer version.
 
@@ -97,6 +117,12 @@ Assess the impact of the Azure price increases effective 1 February 2027 across 
 
 If the skill reports authorization failures, assign **Reader** and **Cost Management Reader** to the SRE Agent managed identity on the subscriptions to assess, then retry after Azure RBAC propagation completes.
 
+To verify the Cost Details skill, use a completed past day:
+
+```text
+Show the ActualCost details by resource for subscription <subscription-id> on 12 October 2026. Include every page and keep currencies separate.
+```
+
 ### Common installation errors
 
 | Symptom | Check |
@@ -104,6 +130,9 @@ If the skill reports authorization failures, assign **Reader** and **Cost Manage
 | Plugin or `plugin.json` not found | **Path in repo** must be exactly `utilities/azure-cost-increase-assessment` |
 | Repository not found | Use `DevOpsStyle/AzureUtilities`; if the repository is private, provide a PAT with read access |
 | Skill does not appear after installation | Refresh the Plugins page, confirm the success message, then check **Skill builder** or **Agent Canvas** |
+| Cost Details skill cannot call its tools | Create both Python tools with the exact documented names, enable ARM Identity, then attach them with **Choose tools** |
+| Cost Details tool returns authorization errors | Assign **Cost Management Reader** to the tool's managed identity on the requested subscription |
+| Cost Details tool returns `split_required` | Request smaller, nonoverlapping periods as described in the setup guide |
 | The portal shows an unexpected React error | Refresh and check whether the plugin was installed despite the UI error; otherwise retry with the exact field values above |
 | Assessment returns authorization errors | Grant the agent managed identity **Reader** and **Cost Management Reader** on the target scope |
 
