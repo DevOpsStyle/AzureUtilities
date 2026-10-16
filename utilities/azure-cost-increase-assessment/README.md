@@ -239,6 +239,8 @@ Rules: apply the skill's SKU, region, exclusion, and commitment rules without st
 Output: give a short overview first (what the affected resources cost today and after the change, with a commitments line when reservations or savings plans appear), then ask which resource to analyze in depth and go deep only on that resource: its region and series rule, billed cost, the reservation or savings plan that covers it, and related resources. Keep long resource lists out of the chat. Verify per-resource and per-currency totals, generate the assessment CSV, and persist it (save the file and confirm it exists) before sharing it.
 
 If complete billing evidence remains unavailable, report the limitation rather than presenting a complete forecast. Use read-only tools for discovery and billing. Never change Azure resources.
+
+If the user ask for the increase rule, read the assessment-rules.md
 ```
 
 What each paragraph does:
