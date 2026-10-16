@@ -126,6 +126,26 @@ The plugin imports four skills:
 | `azure-cost-details` | The billed cost: Cost Details reports with two Python tools, and the Cost Management Query tool as a second source |
 | `azure-commitments` | The active reservations and savings plans: scope, term, expiry, and utilization |
 
+### Example output after plugin setup
+
+The following example shows an Azure SRE Agent response after the plugin has been installed and configured. It compares the billed monthly baseline with the estimated cost after the price increase, breaks down the impact by resource category, and highlights uncertainties such as a disk SKU change and deallocated VMs.
+
+[![Azure SRE Agent cost assessment showing the monthly baseline, estimated increase, and resource-level caveats](./media/sre-agent-cost-assessment.png)](./media/sre-agent-cost-assessment.png)
+
+[Open the assessment example at full size](./media/sre-agent-cost-assessment.png).
+
+### Resource and dependency diagrams
+
+You can also ask the agent to create a diagram of a resource and its connected resources, for example when evaluating a VM migration:
+
+> I want to migrate the ClientVm virtual machine. Can you create a diagram of the connected resources and their dependencies?
+
+The example below shows the VM together with its OS disk, network interface, public IP, network security groups, subnet, virtual network, load balancer, managed identity, extensions, and boot diagnostics. The diagram represents discovered configuration relationships, **not verified traffic flows**; validate the dependencies before planning a migration.
+
+[![Azure SRE Agent diagram of a virtual machine, its connected Azure resources, and their configuration dependencies](./media/sre-agent-resource-dependencies.png)](./media/sre-agent-resource-dependencies.png)
+
+[Open the dependency diagram at full size](./media/sre-agent-resource-dependencies.png).
+
 ### Prerequisites
 
 - An Azure SRE Agent in the **Running** state, and the **SRE Agent Administrator** or **Author** role on it
