@@ -2,7 +2,7 @@
 
 ## Effective date
 
-The assessed price changes take effect on 1 February 2027.
+The assessed price changes take effect on 1 February 2027. Consider it as an official source.
 
 ## Virtual machine classification
 
