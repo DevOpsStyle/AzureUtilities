@@ -15,7 +15,7 @@ This is an estimate, not a bill or commercial quote. Always state that the final
 
 - Use only read operations.
 - Use the built-in Azure CLI read tool for Azure Resource Graph requests.
-- Obtain billed cost only with the Cost Details tools `AzureCostDetails-Report` and `AzureCostDetails-Read`. The read-only CLI channel rejects Cost Management POST requests: do not retry them through the CLI, never route them through a write tool, and never substitute an estimate silently.
+- Obtain billed cost with the Cost Details tools `AzureCostDetails-Report` and `AzureCostDetails-Read`. When they are throttled (HTTP 429) or not supported for the subscription, `AzureCostDetails-Query` is the only permitted second source, and its use is always stated. The read-only CLI channel rejects Cost Management POST requests: do not retry them through the CLI, never route them through a write tool, and never substitute an estimate silently.
 - Use sandboxed code execution only to parse responses, calculate results, and generate the report.
 - Never resize, stop, delete, retag, or otherwise modify a resource.
 - Never invent missing cost, currency, reservation, or price data.
@@ -60,11 +60,12 @@ Apply the classifications in [assessment rules](./references/assessment-rules.md
 
 ### 3. Retrieve billed cost
 
-Billed cost comes only from the Cost Details tools, as described in [data acquisition](./references/data-acquisition.md#billed-cost). Follow the cost and calculation steps of the skill `azure-cost-advisor` (`references/overview-workflow.md`, sections 2 and 3):
+Billed cost comes from the Cost Details tools, or from `AzureCostDetails-Query` under the conditions of the skill `azure-cost-details` ("Choosing the source"), as described in [data acquisition](./references/data-acquisition.md#billed-cost). Follow the cost and calculation steps of the skill `azure-cost-advisor` (`references/overview-workflow.md`, sections 2 and 3):
 
-1. One `AzureCostDetails-Report` per subscription and month, with `metric="ActualCost"`, for the last `Cost months` complete months.
+1. One `AzureCostDetails-Report` per subscription and month, with `metric="ActualCost"`, for the last `Cost months` complete months. Or one `AzureCostDetails-Query` call for the whole period.
 2. `AzureCostDetails-Read` with `view="resources"` for every page of every report.
-3. `AmortizedCost` for the same months when reservation or savings-plan usage appears.
+3. `AmortizedCost` for the same months when reservation or savings-plan usage appears. The Query tool returns it with `metric="both"`.
+4. When reservation or savings-plan usage appears, read the active commitments once with `AzureCommitments-List` (skill `azure-commitments`) to know which ones end before the effective date.
 
 Surface any subscription that fails because of permissions or another error; do not treat it as zero cost. Normalize resource IDs to lowercase before joining inventory and cost rows.
 
@@ -78,7 +79,7 @@ Apply the formulas and commitment handling in [assessment rules](./references/as
 - assign a zero baseline when only excluded meters were billed
 - use retail list price only for VMs and managed disks with no billed usage, as a hypothetical scenario labelled "hypothetical, not billed"
 
-The Cost Details totals per resource do not split meter subcategories. Storage accounts, Azure NetApp Files, and Elastic SAN are therefore an upper bound in bulk; split their excluded meters with `AzureCostDetails-Read` `view="rows"` for the resource chosen for a deep dive.
+The Cost Details totals per resource do not split meter subcategories, and neither do the Query records in the resource view. Storage accounts, Azure NetApp Files, and Elastic SAN are therefore an upper bound in bulk; split their excluded meters for the resource chosen for a deep dive, with `AzureCostDetails-Read` `view="rows"` or `AzureCostDetails-Query` `group_by="meter"`.
 
 If a retail price cannot be matched confidently, set the cost source to `None` and explain why. Do not substitute a similar SKU or region.
 
@@ -115,14 +116,14 @@ Return:
 
 - If Azure Resource Graph access fails, stop and report that Reader access is required.
 - If the Cost Details tools are missing, name them and say they must be created in Agent Canvas; see the plugin README. Do not fall back to a CLI POST or a silent estimate.
-- If Cost Details fails for some subscriptions, continue with the successful ones and clearly list the incomplete ones. A retail list-price scenario is allowed only for VMs and managed disks, labelled "hypothetical, not billed".
+- If Cost Details fails for some subscriptions, continue with the successful ones and clearly list the incomplete ones. For a throttled or unsupported subscription make one attempt with `AzureCostDetails-Query` and state the source. A retail list-price scenario is allowed only for VMs and managed disks, labelled "hypothetical, not billed".
 - If complete billing evidence stays unavailable for all subscriptions, report the limitation and do not present a complete forecast, and do not imply that discounts, Azure Hybrid Benefit, commitments, or actual running hours were considered.
 - If the Azure CLI read tool or code execution is unavailable, explain which capability is missing and provide the equivalent local command from the utility documentation. Do not return a success-shaped estimate.
 
 ## Related skills
 
-For a conversational analysis (overview first, then a deep dive on a resource the customer chooses), use `azure-cost-advisor`. It applies the rules of this skill. The tool mechanics are in `azure-cost-details`.
+For a conversational analysis (overview first, then a deep dive on a resource the customer chooses), use `azure-cost-advisor`. It applies the rules of this skill. The cost tools are in `azure-cost-details`, and the active reservations and savings plans in `azure-commitments`.
 
 ## Local reference implementation
 
-The repository also contains `CostIncrease_Assessment_v6.ps1` for local execution with `Az.Accounts` and `Az.ResourceGraph`. It is the reference implementation and the right choice for very large inventories. The SRE workflow uses the agent's managed identity, the Azure CLI read tool for Resource Graph, and the Cost Details tools for billed cost; it does not require PowerShell in the SRE sandbox.
+The repository also contains `CostIncrease_Assessment_v6.ps1` for local execution with `Az.Accounts` and `Az.ResourceGraph`. It is the reference implementation and the right choice for very large inventories. The SRE workflow uses the agent's managed identity, the Azure CLI read tool for Resource Graph, the Cost Details tools for billed cost (and the Query tool as its second source), and `AzureCommitments-List` for the active reservations and savings plans; it does not require PowerShell in the SRE sandbox.

@@ -65,15 +65,15 @@ When the user supplies a narrower scope, add subscription or resource-group filt
 
 ## Billed cost
 
-Billed cost comes only from the Cost Details tools. The read-only CLI channel rejects Cost Management Query API POST requests, so do not retry them through the CLI, do not route them through a write tool, and do not replace them with an estimate.
+Billed cost comes from the Cost Details tools. When they are throttled (HTTP 429) or not supported for the subscription, `AzureCostDetails-Query` is the only permitted second source: it calls the same Cost Management Query API as the PowerShell script, through a Python tool. The read-only CLI channel rejects Cost Management Query API POST requests, so do not retry them through the CLI, do not route them through a write tool, and do not replace them with an estimate.
 
-| What the PowerShell script reads | Cost Details equivalent |
-|---|---|
-| Query A: actual on-demand cost by resource | `AzureCostDetails-Report` with `metric="ActualCost"`, then `AzureCostDetails-Read` with `view="resources"`: cost, `pricing_models`, and `service_names` per resource |
-| Query A: split by meter subcategory | `AzureCostDetails-Read` with `view="rows"` and `resource_id`, for one resource at a time (storage meter exclusions) |
-| Query B: amortized cost by pricing model | The same tools with `metric="AmortizedCost"` |
+| What the PowerShell script reads | Cost Details equivalent | Query equivalent (`AzureCostDetails-Query`) |
+|---|---|---|
+| Query A: actual on-demand cost by resource | `AzureCostDetails-Report` with `metric="ActualCost"`, then `AzureCostDetails-Read` with `view="resources"`: cost, `pricing_models`, and `service_names` per resource | `group_by="resource"` with `meter_categories="Virtual Machines,Storage"`: `cost` and `pricing_models` per resource, with the other meters left out at the source |
+| Query A: split by meter subcategory | `AzureCostDetails-Read` with `view="rows"` and `resource_id`, for one resource at a time (storage meter exclusions) | `group_by="meter"` with `resource_id`: cost per meter subcategory and pricing model |
+| Query B: amortized cost by pricing model | The same tools with `metric="AmortizedCost"` | `metric="both"`: `amortized_cost` in the same record |
 
-One report covers one calendar month of one subscription, so request one report per month. The cost and calculation steps are in the skill `azure-cost-advisor` (`references/overview-workflow.md`, sections 2 and 3). The tool mechanics are in the skill `azure-cost-details`.
+One report covers one calendar month of one subscription, so request one report per month. One Query call covers any span up to 366 days. The cost and calculation steps are in the skill `azure-cost-advisor` (`references/overview-workflow.md`, sections 2 and 3). The tool mechanics and the choice between the two sources are in the skill `azure-cost-details`.
 
 ## Azure Retail Prices API
 

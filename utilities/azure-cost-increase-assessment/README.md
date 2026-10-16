@@ -112,63 +112,82 @@ Setup has four parts. Do them in this order:
 
 | Step | Part | What it contains | How it gets into the agent |
 |---|---|---|---|
-| 1 | Permissions | `Reader` and `Cost Management Reader` for the agent's managed identity | Azure role assignments |
-| 2 | Python tools | `AzureCostDetails-Report` and `AzureCostDetails-Read` | Created by you in Agent Canvas: Azure SRE Agent cannot import Python tools from `plugin.json` |
-| 3 | Skills | `azure-cost-advisor`, `azure-cost-increase-assessment`, `azure-cost-details` | Imported by this plugin |
+| 1 | Permissions | `Reader` and `Cost Management Reader` on the subscriptions, and two tenant-level reader roles for reservations and savings plans | Azure role assignments |
+| 2 | Python tools | `AzureCostDetails-Report`, `AzureCostDetails-Read`, `AzureCostDetails-Query`, and `AzureCommitments-List` | Created by you in Agent Canvas: Azure SRE Agent cannot import Python tools from `plugin.json` |
+| 3 | Skills | `azure-cost-advisor`, `azure-cost-increase-assessment`, `azure-cost-details`, `azure-commitments` | Imported by this plugin |
 | 4 | Custom instructions | Routing and guardrails applied to every conversation | Pasted by you in the agent's general custom instructions |
 
-The plugin imports three skills:
+The plugin imports four skills:
 
 | Skill | Purpose |
 |---|---|
 | `azure-cost-advisor` | The conversation: overview, shortlist, deep dive on the chosen resource, and the CSV |
 | `azure-cost-increase-assessment` | The canonical increase rules, inventory queries, CSV format, and the bulk CSV assessment |
-| `azure-cost-details` | How to generate and read Cost Details reports with the two Python tools |
+| `azure-cost-details` | The billed cost: Cost Details reports with two Python tools, and the Cost Management Query tool as a second source |
+| `azure-commitments` | The active reservations and savings plans: scope, term, expiry, and utilization |
 
 ### Prerequisites
 
 - An Azure SRE Agent in the **Running** state, and the **SRE Agent Administrator** or **Author** role on it
 - The **Plugins** page visible under **Builder**
-- Subscriptions on an **Enterprise Agreement (EA)** or a **Microsoft Customer Agreement (MCA)**: the Cost Details API behind the two tools supports only these. On other offers the agent reports the error instead of estimating (see Troubleshooting)
+- Subscriptions on an **Enterprise Agreement (EA)** or a **Microsoft Customer Agreement (MCA)** for the Cost Details tools, which support only these. On other offers, or when Cost Details is rate-limited, the agent uses the Query tool and says so (see "How the tools get the costs")
 - Permission to create role assignments on the subscriptions to analyse
+- To see reservations and savings plans: someone who can **elevate access** to grant two roles at tenant scope (Step 1). Without them the agent works, but reports the commitment details as not verified
 
 ### Step 1. Grant the agent access
 
-The agent works with its **user-assigned managed identity (UAMI)**. Azure assigns `Reader` only to the resource groups chosen at creation, and no cost role. Add these roles at **subscription** scope, for every subscription to analyse:
+The agent works with its **user-assigned managed identity (UAMI)**. Azure assigns `Reader` only to the resource groups chosen at creation, and no cost role. Add these roles:
 
-| Role | Why |
-|---|---|
-| `Reader` | Azure Resource Graph returns only what the identity can read. At subscription scope it sees every resource, not only the agent's resource groups |
-| `Cost Management Reader` | Required by the two Cost Details tools |
-| `Reservations Reader` (optional) | Lets the agent read reservation expiry dates in a deep dive. It can only be assigned at tenant scope, `/providers/Microsoft.Capacity`, by someone with elevated access. Without it the expiry is reported as not verified |
+| Role | Scope | Why |
+|---|---|---|
+| `Reader` | Subscription | Azure Resource Graph returns only what the identity can read. At subscription scope it sees every resource, not only the agent's resource groups |
+| `Cost Management Reader` | Subscription | Required by the three cost tools |
+| `Reservations Reader` | Tenant: `/providers/Microsoft.Capacity` | Lets `AzureCommitments-List` read the active reservations. A reservation is a tenant-level resource, so a role on the subscription shows none |
+| `Savings plan reader` | Tenant: `/providers/Microsoft.BillingBenefits` | Lets `AzureCommitments-List` read the active savings plans, for the same reason |
 
-Find the **Object (principal) ID** of the UAMI in the agent portal under **Settings > Azure settings > Go to Identity**, then run:
+Find the **Object (principal) ID** of the UAMI in the agent portal under **Settings > Azure settings > Go to Identity**, then run, for every subscription to analyse:
 
 ```bash
 az role assignment create --assignee-object-id <uami-object-id> --assignee-principal-type ServicePrincipal --role "Reader" --scope /subscriptions/<subscription-id>
 az role assignment create --assignee-object-id <uami-object-id> --assignee-principal-type ServicePrincipal --role "Cost Management Reader" --scope /subscriptions/<subscription-id>
 ```
 
-Role assignments can take several minutes to propagate. The cost visibility settings of the agreement still apply, for example *AO view charges* on an EA.
+The two tenant-level roles are assigned once for the tenant. You need User Access Administrator rights at tenant scope to grant them: a Global Administrator can [elevate access](https://learn.microsoft.com/azure/role-based-access-control/elevate-access-global-admin) for that. Then run:
 
-### Step 2. Create the two Python tools
+```powershell
+Connect-AzAccount -Tenant <tenant-id>
+New-AzRoleAssignment -Scope "/providers/Microsoft.Capacity" -PrincipalId <uami-object-id> -RoleDefinitionName "Reservations Reader"
+New-AzRoleAssignment -Scope "/providers/Microsoft.BillingBenefits" -PrincipalId <uami-object-id> -RoleDefinitionName "Savings plan reader"
+```
+
+Role assignments can take several minutes to propagate. The cost visibility settings of the agreement still apply, for example *AO view charges* on an EA. Assignments made with PowerShell do not appear in the portal: check them with `Get-AzRoleAssignment`.
+
+### Step 2. Create the four Python tools
 
 Azure SRE Agent does not accept underscores in tool names. Use the hyphenated names exactly: the skills call the tools by these names.
 
+| Tool name | Source | Timeout | Setup guide (description to paste, playground tests) |
+|---|---|---|---|
+| `AzureCostDetails-Report` | [AzureCostDetails-Report.py](./skills/azure-cost-details/scripts/AzureCostDetails-Report.py) | 900 s | [AzureCostDetails-Guida.md](./skills/azure-cost-details/references/AzureCostDetails-Guida.md) |
+| `AzureCostDetails-Read` | [AzureCostDetails-Read.py](./skills/azure-cost-details/scripts/AzureCostDetails-Read.py) | 900 s | [AzureCostDetails-Guida.md](./skills/azure-cost-details/references/AzureCostDetails-Guida.md) |
+| `AzureCostDetails-Query` | [AzureCostDetails-Query.py](./skills/azure-cost-details/scripts/AzureCostDetails-Query.py) | 300 s | [AzureCostDetails-Guida.md](./skills/azure-cost-details/references/AzureCostDetails-Guida.md) |
+| `AzureCommitments-List` | [AzureCommitments-List.py](./skills/azure-commitments/scripts/AzureCommitments-List.py) | 120 s | [AzureCommitments-Guida.md](./skills/azure-commitments/references/AzureCommitments-Guida.md) |
+
+For each tool:
+
 1. Open the agent and go to **Builder > Agent Canvas**, then select **Create > Tool > Python tool**.
-2. Set **Tool Name** to `AzureCostDetails-Report` and **Timeout (seconds)** to `900`. Paste [the source](./skills/azure-cost-details/scripts/AzureCostDetails-Report.py) in the **Code** tab, and the description from the [setup guide](./skills/azure-cost-details/references/AzureCostDetails-Guida.md) in **Description**.
+2. Set **Tool Name** and **Timeout (seconds)** as in the table. Paste the source in the **Code** tab, and the description from the setup guide in **Description**.
 3. Open the **Identity** tab and enable **Azure Resource Manager (ARM)**.
-4. Open **Test playground** and run the first example of the setup guide with a completed past day. `ready` is a success; `pending` means run it again with the same `resume_state`.
+4. Open **Test playground** and run the example of the setup guide. For `AzureCostDetails-Report`, use a completed past day: `ready` is a success, and `pending` means run it again with the same `resume_state`. Test `AzureCostDetails-Read` with the `operation_url` returned by the first tool.
 5. Select **Create tool**.
-6. Repeat for `AzureCostDetails-Read` ([source](./skills/azure-cost-details/scripts/AzureCostDetails-Read.py)), testing it with the `operation_url` returned by the first tool.
 
 The agent does not read the repository files at run time. When the scripts change, edit each tool, paste the new source, and save.
 
-The tools use the agent's managed identity. They contain no client ID, token, storage key, or SAS. The reader downloads the SAS-protected blobs returned by Azure and never forwards the ARM token to Blob Storage.
+The tools use the agent's managed identity. They contain no client ID, token, storage key, or SAS. The reader downloads the SAS-protected blobs returned by Azure and never forwards the ARM token to Blob Storage. All four tools are read-only.
 
 ### Step 3. Install the plugin
 
-Create the two Python tools first, so the skills can resolve the tool names when they are imported.
+Create the four Python tools first, so the skills can resolve the tool names when they are imported.
 
 The plugin is stored in a subfolder of this repository. Enter the repository and subfolder in two separate fields:
 
@@ -185,9 +204,9 @@ The plugin is stored in a subfolder of this repository. Enter the repository and
 4. Enter `DevOpsStyle/AzureUtilities` in **GitHub repository URL**.
 5. Enter `utilities/azure-cost-increase-assessment` in **Path in repo**.
 6. Leave credentials empty for this public repository. If it is made private, expand **Advanced** and provide a GitHub personal access token with read access.
-7. Select **Install** and wait for `Plugin installed from URL successfully with 3 skills`.
-8. Open **Builder > Skill builder** or **Agent Canvas** and verify that `azure-cost-advisor`, `azure-cost-increase-assessment`, and `azure-cost-details` are listed.
-9. Open `azure-cost-advisor` and `azure-cost-details` and confirm that `AzureCostDetails-Report` and `AzureCostDetails-Read` are attached to each. If they are not, use **Choose tools** to attach them and save the skill.
+7. Select **Install** and wait for `Plugin installed from URL successfully with 4 skills`.
+8. Open **Builder > Skill builder** or **Agent Canvas** and verify that `azure-cost-advisor`, `azure-cost-increase-assessment`, `azure-cost-details`, and `azure-commitments` are listed.
+9. Confirm that the tools are attached: `azure-cost-details` has `AzureCostDetails-Report`, `AzureCostDetails-Read`, and `AzureCostDetails-Query`; `azure-cost-advisor` has those three and `AzureCommitments-List`; `azure-commitments` has `AzureCommitments-List`. If a tool is not attached, use **Choose tools** to attach it and save the skill.
 
 The plugin appears in the Plugins grid with the **Standalone** badge. Azure SRE Agent pins the installation to the current Git commit, so repository updates are not applied automatically. Update or reinstall the plugin to load a newer version.
 
@@ -209,15 +228,15 @@ The skills do the work. The custom instructions make the agent choose them, appl
 3. Save, then start a **new chat thread** so the change applies.
 
 ```text
-For Azure cost questions and for the Azure VM and storage price increases effective February 1, 2027, use the azure-cost-advisor skill. It relies on azure-cost-increase-assessment (rules, inventory, CSV format) and azure-cost-details (billed cost). Use azure-cost-details alone for plain billing-detail requests.
+For Azure cost questions and for the Azure VM and storage price increases effective February 1, 2027, use the azure-cost-advisor skill. It relies on azure-cost-increase-assessment (rules, inventory, CSV format), azure-cost-details (billed cost), and azure-commitments (active reservations and savings plans). Use azure-cost-details alone for plain billing-detail requests and azure-commitments alone for questions about reservations and savings plans.
 
-Scope: default to the subscription established in the conversation (otherwise discover the accessible subscriptions and ask which to analyze) and the last three complete calendar months. State both explicitly.
+Scope: default to the subscription established in the conversation (otherwise discover the accessible subscriptions and ask which to analyze) and the last complete calendar month. State both explicitly.
 
-Evidence: inventory VMs and separately billed disks, snapshots, and storage with read-only Azure Resource Graph queries. Obtain billed cost only through the AzureCostDetails-Report and AzureCostDetails-Read tools: complete ActualCost for every month, following every report page, plus AmortizedCost for the same months whenever reservation or savings-plan usage appears. If a read-only Cost Management POST is rejected by the CLI read channel, use these tools; do not route it through a write tool or silently substitute an estimate.
+Evidence: inventory VMs and separately billed disks, snapshots, and storage with read-only Azure Resource Graph queries. By default obtain billed cost through the AzureCostDetails-Report and AzureCostDetails-Read tools: complete ActualCost for every month of the period, following every report page, plus AmortizedCost for the same months whenever reservation or savings-plan usage appears. Make one attempt with the AzureCostDetails-Query tool when Cost Details is rate-limited (HTTP 429) or not supported for the subscription, or when the customer asks for it, and say which source you used and what it cannot show; if both are unavailable, stop and report the wait. Never repeat a throttled request, route a Cost Management POST through the CLI or a write tool, or silently substitute an estimate. Read the active reservations and savings plans (scope, term, expiry, utilization) with the AzureCommitments-List tool, passing the effective date: an empty or partial result means "not verified", never "none exist".
 
 Rules: apply the skill's SKU, region, exclusion, and commitment rules without stacking increase percentages. Use public retail prices only where the skill permits a fallback, and label those figures "hypothetical, not billed". Distinguish a currently deallocated VM from historically billed compute: show its running-cost scenario separately, never as an expected bill while it remains stopped. Flag unattached disks, changes between the current SKU and the historical billing meter, missing data, and assumptions about future usage.
 
-Output: give a short overview first (what the affected resources cost today and after the change), then ask which resource to analyze in depth and go deep only on that resource: its region and series rule, reservations, and related resources. Keep long resource lists out of the chat. Verify per-resource and per-currency totals, generate the assessment CSV, and persist it (save the file and confirm it exists) before sharing it.
+Output: give a short overview first (what the affected resources cost today and after the change, with a commitments line when reservations or savings plans appear), then ask which resource to analyze in depth and go deep only on that resource: its region and series rule, billed cost, the reservation or savings plan that covers it, and related resources. Keep long resource lists out of the chat. Verify per-resource and per-currency totals, generate the assessment CSV, and persist it (save the file and confirm it exists) before sharing it.
 
 If complete billing evidence remains unavailable, report the limitation rather than presenting a complete forecast. Use read-only tools for discovery and billing. Never change Azure resources.
 ```
@@ -226,23 +245,23 @@ What each paragraph does:
 
 | Paragraph | Effect |
 |---|---|
-| Routing | Sends cost and price-increase questions to `azure-cost-advisor`, which uses the other two skills |
-| Scope | Fixes the defaults: the subscription of the conversation and the last three complete calendar months, always stated |
-| Evidence | Read-only inventory; billed cost only through the two Cost Details tools; `ActualCost` for every month, plus `AmortizedCost` when reservation or savings-plan usage appears; every report page |
+| Routing | Sends cost and price-increase questions to `azure-cost-advisor`, which uses the other three skills, and questions about reservations and savings plans to `azure-commitments` |
+| Scope | Fixes the defaults: the subscription of the conversation and the last complete calendar month, always stated |
+| Evidence | Read-only inventory. Billed cost through the Cost Details tools, with `AzureCostDetails-Query` as a single, labelled second source when they are throttled, not supported, or on request. `AmortizedCost` when reservation or savings-plan usage appears. Active commitments through `AzureCommitments-List`, where an empty result is never read as "none" |
 | Rules | The rules of the PowerShell script: no stacking, exclusions, retail prices only as labelled hypothetical figures, a separate scenario for deallocated VMs, and flags for unattached disks, resized VMs, missing data, and future-usage assumptions |
-| Output | Overview first, then a deep dive on the chosen resource. Long lists go to the CSV, which is verified and saved before it is shared |
+| Output | Overview first, with a commitments line, then a deep dive on the chosen resource. Long lists go to the CSV, which is verified and saved before it is shared |
 | Limits | Never presents incomplete evidence as a complete forecast, and never changes Azure resources |
 
-To analyse a different announcement, change the date and the product names in the first paragraph. The rules come from the skills: for another set of rules the agent asks for the announcement text and confirms the rules with the customer before applying them.
+The text sets **one complete month** as the default period, which makes fewer Cost Details requests. Without a period in the instructions, the skills use the last three complete months. For a steadier average write "the last three complete calendar months" in the second paragraph. To analyse a different announcement, change the date and the product names in the first paragraph. The rules come from the skills: for another set of rules the agent asks for the announcement text and confirms the rules with the customer before applying them.
 
 ### Step 5. Check these settings
 
 | Setting | Where | Why |
 |---|---|---|
 | Code Interpreter | **Settings > Basics > Early access to features**, as documented at the time of writing | The agent computes totals and writes the CSV with code. Without code execution there is no CSV download link. Skip this if code execution already works |
-| Tool access policy | **Settings > Permissions** | If the agent asks for approval on every call, add an *Allow* rule for `AzureCostDetails-Report`, `AzureCostDetails-Read`, and `RunAzCliReadCommands`. Do not allow `RunAzCliWriteCommands` for these tasks |
+| Tool access policy | **Settings > Permissions** | If the agent asks for approval on every call, add an *Allow* rule for `AzureCostDetails-Report`, `AzureCostDetails-Read`, `AzureCostDetails-Query`, `AzureCommitments-List`, and `RunAzCliReadCommands`. Do not allow `RunAzCliWriteCommands` for these tasks |
 | Run mode | **Settings > Basics** | In Review mode only Azure infrastructure operations ask for approval. These skills are read-only, so it does not get in the way |
-| Active skills | n/a | An agent keeps at most five skills active at a time. These three leave room for two more |
+| Active skills | n/a | An agent keeps at most five skills active at a time. These four leave room for one more |
 
 ### Step 6. Verify
 
@@ -254,15 +273,31 @@ Open a **new chat thread** and try these in order.
    What will the Azure price increases effective 1 February 2027 cost us? Use the subscription <subscription-id>.
    ```
 
-   Expected: the agent states the subscription and the three complete months, requests the Cost Details reports (this can take a few minutes), and answers with a short overview: today, after the change, the monthly and yearly difference, and a table per category. It lists what is not in the totals, gives a CSV download link, and asks which resource to analyse. It does not print a long resource list.
+   Expected: the agent states the subscription and the period (the last complete month, as set in the instructions), requests the Cost Details report (this can take a few minutes), and answers with a short overview: today, after the change, the monthly and yearly difference, and a table per category. When reservations or savings plans appear it adds a commitments line. It lists what is not in the totals, gives a CSV download link, and asks which resource to analyse. It does not print a long resource list.
 
-2. **Deep dive**: answer with a number or name from the shortlist. Expected: the verdict on the first line (affected or not, and why: series or region), the billed cost, the reservation and savings-plan status, and the related disks.
+2. **Deep dive**: answer with a number or name from the shortlist. Expected: the verdict on the first line (affected or not, and why: series or region), the billed cost, the reservation or savings plan that covers it, with its expiry and utilization, and the related disks.
 
 3. **Billing rows** (skill `azure-cost-details`), on a completed past day:
 
    ```text
    Show the ActualCost details by resource for subscription <subscription-id> on 12 October 2026. Include every page and keep currencies separate.
    ```
+
+4. **Commitments** (skill `azure-commitments`):
+
+   ```text
+   Which reservations and savings plans are active, and which end before 1 February 2027? Use the subscription <subscription-id>.
+   ```
+
+   Expected: the counts, a table of at most 10 rows (name, SKU or hourly commitment, region, term, expiry, scope, 30-day utilization), and the ones that end before the date. With the roles of step 1 missing, the agent says that no commitment is visible and names the roles. It does not say that none exist.
+
+5. **Second source** (the Query tool), to see how it behaves without waiting for a 429:
+
+   ```text
+   Use the Cost Management Query tool to show the billed cost by resource for September 2026 on subscription <subscription-id>, for Virtual Machines and Storage only.
+   ```
+
+   Expected: the agent states that the source is the Cost Management Query API, aggregated by resource, and that it does not show quantities, unit prices, tags, or reservation IDs.
 
 If the agent skips a skill or a tool, open the tool calls of the thread to see which step failed, and check Troubleshooting.
 
@@ -274,42 +309,65 @@ If the agent skips a skill or a tool, open the tool calls of the thread to see w
 | Repository not found | Use `DevOpsStyle/AzureUtilities`; if the repository is private, provide a PAT with read access |
 | The portal shows an unexpected React error | Refresh and check whether the plugin was installed despite the UI error; otherwise retry with the exact field values above |
 | A skill does not appear after installation | Refresh the Plugins page, confirm the success message, then check **Skill builder** or **Agent Canvas** |
-| The agent cannot find `AzureCostDetails-Report` or `AzureCostDetails-Read` | The names must contain hyphens, with no underscores. Check **Capabilities > Tools > Custom tools**, then attach both tools to `azure-cost-advisor` and `azure-cost-details` with **Choose tools** |
+| The agent cannot find one of the four tools | The names must contain hyphens, with no underscores. Check **Capabilities > Tools > Custom tools**, then attach the tools to the skills as in step 3, with **Choose tools** |
 | The agent behaves as before an update | The plugin is pinned to a commit: update or reinstall it. The tool code is separate: paste the new source in each tool |
-| The agent tries a Cost Management POST through the CLI and it is rejected | Expected: the read-only channel blocks it, and the custom instructions tell the agent to use the Cost Details tools. If it keeps trying, check that the step 4 text is saved and start a new thread |
+| The agent tries a Cost Management POST through the CLI and it is rejected | Expected: the read-only channel blocks it, and the custom instructions tell the agent to use the cost tools. If it keeps trying, check that the step 4 text is saved and start a new thread |
 | Resource Graph shows fewer resources than expected | The managed identity has `Reader` only on some resource groups. Assign `Reader` at subscription scope (step 1) |
-| Cost Details returns an authorization error | Assign `Cost Management Reader` on the subscription (step 1), wait for propagation, and check that ARM is enabled in the tool's **Identity** tab |
-| Cost Details returns another error for a subscription | The API supports EA and MCA only. The agent reports the error and does not estimate. For other offers use the local script `CostIncrease_Assessment_v6.ps1`, which uses the Cost Management Query API |
+| A cost tool returns an authorization error | Assign `Cost Management Reader` on the subscription (step 1), wait for propagation, and check that ARM is enabled in the tool's **Identity** tab. Both cost sources need the same role |
+| Cost Details returns another error for a subscription | The API supports EA and MCA only. The agent then uses `AzureCostDetails-Query` and says so. If both fail, it reports the errors and does not estimate |
 | A tool returns `split_required` | The report is too large for one call: the agent asks for smaller, non-overlapping periods |
-| `AzureCostDetails-Report` returns HTTP 429 and a long wait (for example 1 to 2 hours) | Azure Cost Management is rate-limiting on-demand reports. The report was not created, so the blobs and the permissions are not the cause. The tool sends no request before the wait ends. Wait, then ask the agent to resume **in the same thread**. A new thread has no `resume_state` and sends a new request. See "Avoid the Cost Details rate limit" |
-| The agent says an in-chat calculation is not practical | More than 200 affected resources, or more than 600 cost records in one month. Narrow the scope (subscription, resource group, region, or category) or run the local script |
+| `AzureCostDetails-Report` returns HTTP 429 and a long wait (for example 1 to 2 hours) | Azure Cost Management is rate-limiting on-demand reports. The report was not created, so the blobs and the permissions are not the cause. The tool sends no request before the wait ends. The agent makes one attempt with `AzureCostDetails-Query`. If that is limited too, it gives the exposure overview without amounts and says how long to wait. Then ask the agent to resume **in the same thread**: a new thread has no `resume_state` and sends a new request. See "Avoid the cost rate limits" |
+| `AzureCostDetails-Query` returns `retry` with HTTP 429 | The Query API has its own limits. The agent does not repeat it and does not use the CLI. Wait for the time stated and ask again in the same thread |
+| `AzureCostDetails-Query` returns `empty` | Cost Management returned no data for that period and filters, for example a period without Virtual Machines or Storage charges, or recent days that have not arrived yet. The agent reports it and never reads it as zero cost. Check the period and the category filter, or try again later |
+| The agent says an in-chat calculation is not practical | More than 200 affected resources, or more than 600 cost records (resources) in one month or one Query call. Narrow the scope (subscription, resource group, region, or category) or run the local script |
 | No CSV download link | Code execution is off: see step 5 |
 | The agent asks for approval on every tool call | Add the *Allow* rules in step 5 |
-| Reservation expiry is "not verified" | The identity lacks `Reservations Reader` (optional, step 1). The agent then points to Portal > Reservations |
+| The agent says that no reservation or savings plan is visible | The identity lacks `Reservations Reader` or `Savings plan reader` at tenant scope (step 1), or none exist. An empty list is not proof of absence. If the billing data shows `Reservation` or `SavingsPlan` pricing models, the commitments exist and the roles are missing |
+| `AzureCommitments-List` returns `forbidden` or `partial` | One of the two APIs is not readable: the result names the role. Assign it (step 1) and wait for propagation |
+| `AzureCommitments-List` returns 404 `InvalidResourceType` | The API version is not available in that environment. The tool uses `2022-11-01`, verified for both APIs. The `2026-06-01` shown in the savings plan documentation is not deployed yet |
 | The agent used the wrong dates for "last week" or "last month" | Give explicit dates, for example `from 8 to 14 October 2026`. The agent states the first and last day it used, so check them. It may not know today's date |
 
-### How the two tools get the costs
+### How the tools get the costs and the commitments
 
-1. `AzureCostDetails-Report` sends `POST /subscriptions/<id>/providers/Microsoft.CostManagement/generateCostDetailsReport?api-version=2023-03-01` with the managed identity and the body `{"metric": ..., "timePeriod": {"start": ..., "end": ...}}`. It then polls the `Location` URL, honoring `Retry-After`, until Azure returns the manifest with the blob links. This is the request that a Logic App HTTP action makes: the action follows the `Location` URL by itself, which is why its output already contains the manifest.
+**Cost Details (default).** Two tools, with the same request as a Logic App HTTP action:
+
+1. `AzureCostDetails-Report` sends `POST /subscriptions/<id>/providers/Microsoft.CostManagement/generateCostDetailsReport?api-version=2023-03-01` with the managed identity and the body `{"metric": ..., "timePeriod": {"start": ..., "end": ...}}`. It then polls the `Location` URL, honoring `Retry-After`, until Azure returns the manifest with the blob links. The Logic App action follows the `Location` URL by itself, which is why its output already contains the manifest.
 2. `AzureCostDetails-Read` fetches the manifest again, downloads every CSV blob through its SAS link, aggregates the rows with a temporary database, and returns pages of JSON.
 
 The blob links contain a SAS token, so they are never returned to the agent: the reader takes them from the manifest on every call, and the agent only handles the `operation_url`. Because both tools make the same request as a Logic App, a Logic App gets the same rate limit.
 
-### Avoid the Cost Details rate limit
+**Query (second source).** `AzureCostDetails-Query` sends `POST /subscriptions/<id>/providers/Microsoft.CostManagement/query?api-version=2023-03-01`, the request that `CostIncrease_Assessment_v6.ps1` uses, with the managed identity. It does not use the `azure-mgmt-costmanagement` library: the request is identical, and the tool avoids a package that the runtime may lack and a retry policy that would sleep silently for the whole `Retry-After`. The agent uses it only when Cost Details is rate-limited or not supported, or when a period needs more than three monthly reports, and always says so.
 
-Azure rate-limits on-demand reports of the Cost Details API (`generateCostDetailsReport`). When the limit is hit, Azure answers HTTP 429 with the time to wait, and the tools pass it on. The flow has two steps: `AzureCostDetails-Report` asks Azure to generate the report, and `AzureCostDetails-Read` downloads its CSV blobs. A 429 from the first tool means that Azure refused to generate the report, so nothing was created and nothing was downloaded. The reader can receive a 429 too, and the agent follows the same rules.
+| | Cost Details (Report and Read) | Query (`AzureCostDetails-Query`) |
+|---|---|---|
+| Offers | EA and MCA | Any offer that Cost Management supports |
+| Cost and pricing models per resource and currency | Yes | Yes: `cost`, `amortized_cost`, `pricing_models` |
+| Reservation and savings-plan usage | In the pricing models of the actual-cost rows | Through `amortized_cost` (`metric="both"`) |
+| Cost per meter for one resource | Yes, from the rows | Yes, per meter subcategory and pricing model (`group_by="meter"`) |
+| Raw rows, quantities, unit prices, tags, `ReservationId`, `BenefitId`, VM size | Yes | No |
+| Other meters on the same resource (Defender, licenses, bandwidth) | Included, and flagged | Left out of the cost by the category filter |
+| Period per call | One calendar month | Up to 366 days |
+| Limit | Rate-limited report generation | Query limits of Cost Management |
+
+The granularity per resource is the same. What the Query path cannot show is the row-level detail and what derives from it, such as the VM size or the reservation ID of a row, and the agent states it in the answer.
+
+**Commitments.** `AzureCommitments-List` sends `GET /providers/Microsoft.Capacity/reservations` and `GET /providers/Microsoft.BillingBenefits/savingsPlans`, both with `api-version=2022-11-01`, and normalizes the result. Reservations and savings plans are tenant-level resources, so the APIs return only what the identity can read: an empty list is not proof that none exist, and the tool says so. Neither API lists the resources a commitment covers: a confirmed link comes from the `ReservationId` or `BenefitId` of the billing rows.
+
+### Avoid the cost rate limits
+
+Azure rate-limits on-demand reports of the Cost Details API (`generateCostDetailsReport`), and the Query API has limits of its own. When a limit is hit, Azure answers HTTP 429 with the time to wait, and the tools pass it on. A 429 from `AzureCostDetails-Report` means that Azure refused to generate the report, so nothing was created and nothing was downloaded. The reader and the Query tool can receive a 429 too, and the agent follows the same rules.
 
 - Microsoft recommends generating a report for the same scope and period at most once per day. Cost data refreshes every four hours, so more frequent requests return the same data and can be throttled. Microsoft also recommends caching cost data on your side, and Cost Management Exports for datasets above about 2 GB per month. These tools implement neither.
-- An overview asks for one report per month, 3 by default, and 3 more with `AmortizedCost` when reservations or savings plans appear. A new thread repeats them. Avoid repeating full overviews on the same subscription during testing, and stay in one thread: the agent reuses the reports it has already generated.
+- An overview asks for one report per month, and the same number again with `AmortizedCost` when reservations or savings plans appear. A new thread repeats them. Avoid repeating full overviews on the same subscription during testing, and stay in one thread: the agent reuses the reports it has already generated. The default period of one month keeps this to one report.
 - For tests, use a narrow period, such as one day or one week, and do not repeat an identical request.
-- Both tools send a `ClientType` header (`DevOpsStyle-AzureUtilities-CostDetails`) to Azure Resource Manager, and never to Blob Storage. A Microsoft answer on Microsoft Q&A about Cost Management 429 errors says that callers without it share one rate-limit bucket with all anonymous callers, and asks for one stable value. It is a mitigation, not a guarantee: Azure also limits per subscription and per tenant, and a wait of hours is more likely a limit of that kind.
+- All the cost tools send a `ClientType` header (`DevOpsStyle-AzureUtilities-CostDetails`) to Azure Resource Manager, and never to Blob Storage. A Microsoft answer on Microsoft Q&A about Cost Management 429 errors says that callers without it share one rate-limit bucket with all anonymous callers, and asks for one stable value. It is a mitigation, not a guarantee: Azure also limits per subscription and per tenant, and a wait of hours is more likely a limit of that kind.
 - On a 429 the result includes `rate_limit`: the `Retry-After` and `x-ms-ratelimit-*` headers that Azure sent. The name of the header that carries the wait (`entity`, `tenant`, `client`, or `qpu` in `x-ms-ratelimit-microsoft.costmanagement-<name>-retry-after`) shows which limit was reached. Keep it for support.
-- The agent generates one report at a time and stops all requests for the subscription at the first 429. In that case it gives the exposure overview (what is affected and by which rule) without any amount, and says how long to wait.
-- While waiting, do not start new threads on the same subscription. The local script `CostIncrease_Assessment_v6.ps1` uses a different API, the Cost Management Query API, with its own limits: it may still work, but this is not guaranteed.
+- The agent generates one report at a time and stops all Cost Details requests for the subscription at the first 429. It then makes one attempt with the Query tool. In a live test on the same subscription, the Query API answered while Cost Details was blocked for the agent, but that test used another identity: a limit tied to the agent's identity would apply to both. If the Query tool is limited too, the agent gives the exposure overview (what is affected and by which rule) without any amount, and says how long to wait.
+- While waiting, do not start new threads on the same subscription. The local script `CostIncrease_Assessment_v6.ps1` runs with your own identity and uses the Query API with its own limits: it may still work, but this is not guaranteed.
 
 ### Choose another period
 
-The last three complete calendar months are only the default. Ask for another period in plain language: the agent passes the dates to the tools on every call, and nothing needs to be reinstalled.
+The period is only a default: the one in the custom instructions (the last complete calendar month in step 4), and the last three complete calendar months when neither you nor the instructions name one. Ask for another period in plain language: the agent passes the dates to the tools on every call, and nothing needs to be reinstalled.
 
 | You ask | What the agent does |
 |---|---|
@@ -329,8 +387,9 @@ The last three complete calendar months are only the default. Ask for another pe
 - Storage accounts, Azure NetApp Files, and Elastic SAN are shown as an **upper bound** in the overview: the excluded meters are split only in the deep dive of the chosen resource.
 - A currently deallocated VM is shown as a separate **scenario**, never as an expected bill while it stays stopped.
 - A resize (current SKU different from the billed meter) is detected only in the deep dive.
-- Reservation expiry dates are read on a best-effort basis (step 1).
-- In-chat limits: 200 affected resources per run and 600 cost records per month. The local script has no such limit.
+- Active reservations and savings plans come from `AzureCommitments-List`, which lists only what the identity can read (step 1). When it returns nothing or only part, the agent says the commitments are **not verified** and never that none exist. Which resources a commitment covers is confirmed only by the `ReservationId` or `BenefitId` of the billing rows: the Query source has neither, so there the link stays a candidate.
+- When the Query source replaces Cost Details, the totals per resource are the same kind of figure, but the answer says what that source cannot show: raw rows, quantities, unit prices, tags, and the VM size of a row.
+- In-chat limits: 200 affected resources per run and 600 cost records (resources) per month or per Query call. The local script has no such limit.
 
 The local PowerShell script remains the reference implementation for interactive use outside Azure SRE Agent. The plugin follows the [Azure SRE Agent plugin format](https://learn.microsoft.com/azure/sre-agent/install-plugin-from-url).
 

@@ -69,9 +69,9 @@ Sizing gates. Stop and ask; never shorten silently.
 
 ## 2. Billed cost from Cost Details
 
-Cost comes only from the Cost Details tools. The read-only CLI channel rejects Cost Management POST requests: do not retry them through the CLI, and never through a write tool or a silent estimate.
+Cost comes from the Cost Details tools. When they are throttled (HTTP 429) or not supported for the subscription, the Query tool is the only permitted second source: see "Query path". The read-only CLI channel rejects Cost Management POST requests: do not retry them through the CLI, and never through a write tool or a silent estimate.
 
-1. **Period**: the last three complete calendar months, unless the customer asks otherwise. Name the first and last day in the first answer. One report per subscription and calendar month: a period that crosses a month boundary needs one report for each month it touches. For another period, see "Other periods" at the end of this section.
+1. **Period**: the period the customer names, otherwise the one set in the custom instructions, otherwise the last three complete calendar months. Name the first and last day in the first answer. One report per subscription and calendar month: a period that crosses a month boundary needs one report for each month it touches. For another period, see "Other periods" at the end of this section.
 2. **ActualCost**: for each subscription with affected resources and each month, call `AzureCostDetails-Report` with `metric="ActualCost"`, one report at a time: start the next only after the previous is `ready` or `empty`. Azure rate-limits on-demand reports, and a throttled request means the others would be refused too (see "When billed cost is unavailable"). Tell the customer once that generation can take a few minutes.
 3. **Status handling** (details in skill `azure-cost-details`): `pending` or `retry` repeat with the same parameters and unchanged `resume_state`; `ready` continue; `empty` means no data, not zero cost; `error` follows "When something fails" in the skill.
 4. **Read every page** of every report: `AzureCostDetails-Read` with `view="resources"`, `page_size=200`, `offset=0`, then `next_offset` until `has_more` is false.
@@ -84,22 +84,50 @@ Cost comes only from the Cost Details tools. The read-only CLI channel rejects C
 | Signal in the record | Meaning | Action |
 |---|---|---|
 | `pricing_models` is only `OnDemand` | Fully on demand | The cost is the baseline |
-| includes `Reservation` | Part of the usage is covered by a reservation and shows as 0 in actual cost | The baseline is the on-demand part. Flag it and check expiry in the deep dive |
-| includes `SavingsPlan` | Covered usage is hidden in actual cost but is affected | The calculation uses the amortized total |
+| includes `Reservation` | Part of the usage is covered by a reservation and shows as 0 in actual cost | The baseline is the on-demand part. Flag it. Read the expiry with `AzureCommitments-List` (see "Commitments in the overview") |
+| includes `SavingsPlan` | Covered usage is hidden in actual cost but is affected | The calculation uses the amortized total. The plan's utilization shows how much room it has |
 | includes `Spot` | Not addressed by the announcement | Flag it and do not estimate it |
 | `service_names` has more than `Virtual Machines` or `Storage` | Other meters on the same resource, for example licenses, Defender, or bandwidth | The baseline may be overstated. Flag it |
 | Resource absent from the report | No billed usage in the period | List it as unbilled and do not estimate it |
 
 7. **Keep** `operation_url`, `subscription_id`, month, and metric for the deep dive. Generate a new report only after `valid_till`, or when the reader says the link expired.
 
+### Commitments in the overview
+
+When any record shows `Reservation` or `SavingsPlan` in `pricing_models`, call `AzureCommitments-List` once per tenant, not per subscription: `kind="all"`, `subscription_id`, and `effective_date` set to the effective date of the profile. Reuse the result in the thread: the commitment APIs have a small read quota.
+
+- Read it with skill `azure-commitments`: `covers_effective_date` says which commitments are still active when the new prices start, `expiry_date` and `days_to_expiry` when they end, `applies_to_subscription` whether they can cover this subscription, and `utilization` how much of each is used.
+- Add a short **Commitments** block to the answer (at most 5 lines): how many reservations and savings plans are active and visible, how many end before the effective date (the covered usage is then affected from the effective date), and any underused commitment. Do not assign a commitment to a resource without evidence: the APIs do not list the resources they cover. In the deep dive, the `ReservationId` or `BenefitId` of the billing rows links a resource to its commitment.
+- A `partial`, `forbidden`, or empty result is unverified: say that the commitment details could not be read, name the missing role, and keep `Reservation` or `SavingsPlan` in the pricing models as the only proof of coverage.
+
+### Query path (second source)
+
+Use `AzureCostDetails-Query` when Cost Details is throttled (HTTP 429, or a `retry` with a wait above 15 minutes), when it returns an error that says the offer is not supported (anything other than EA or MCA), or when the period needs more than three monthly reports. Never use it silently: say in the answer that the source is the Cost Management Query API and what it cannot show.
+
+1. **One call for the whole period**: `subscription_id`, `start_date`, `end_date` (any span up to 366 days), `metric="both"`, `group_by="resource"`, `meter_categories="Virtual Machines,Storage"`, `page_size=200`, `offset=0`, then `next_offset` until `has_more` is false. Check that the `returned_count` values add up to `total_items`. Every page repeats both queries: use the largest page size and do not reread pages.
+2. **Only `status="ok"` with `data_complete=true` counts.** `partial` means that one metric failed: do not use the records. `empty` means that Cost Management returned no data for the period and filters: treat the billed cost as unavailable (see "When billed cost is unavailable") and never as zero cost, because recent days may still be missing. A `retry` with HTTP 429 or a wait above 15 minutes: stop (see "When billed cost is unavailable"). If a limitation says that one metric "returned no rows", its values are `null`: use the other metric and report the missing one as not available.
+3. **Calculate** as in section 3. Pass `periods=[(start_date, end_date)]` and set `used_query = True`.
+4. **What changes compared with Cost Details**:
+
+| Item | Query path |
+|---|---|
+| Cost and pricing models per resource | Same granularity: `cost` (ActualCost), `amortized_cost`, `pricing_models` |
+| Reservation and savings-plan usage | Visible through `amortized_cost`. A fully covered resource can have no actual cost |
+| Other meters on the resource (Defender, licenses, bandwidth) | Left out at the source by `meter_categories`: the baseline is not overstated and `other_meters_on_resource` is never raised |
+| Excluded storage meters in bulk | Not split: storage accounts, Azure NetApp Files, and Elastic SAN stay an upper bound |
+| Raw rows, quantities, unit prices, tags, ReservationId, BenefitId, VM size | Not available |
+| Period per call | Up to 366 days, instead of one calendar month |
+
+5. **Label**: write in the answer "Billed cost source: Cost Management Query API, aggregated by resource, Virtual Machines and Storage meters only". The calculation code puts the same sentence in the CSV.
+
 ### When billed cost is unavailable
 
-When a Cost Details request is throttled (HTTP 429, or a `retry` with a wait above 15 minutes), stop requesting reports for that subscription: the remaining months and the `AmortizedCost` report share the same limit. Do not send them, do not repeat the throttled request, and do not use another API or an estimate.
+When both sources are unavailable, stop. A Cost Details request throttled (HTTP 429, or a `retry` with a wait above 15 minutes) is followed by one attempt with the Query path. If the Query tool also returns `retry` or `forbidden`, stop requesting costs for that subscription: do not repeat the throttled request, and do not use the CLI or an estimate.
 
 Answer with the exposure only, from the Summary tail of section 1:
 
 ```text
-Exposure overview: <subscription(s)>. The billed cost is not available yet: Azure is rate-limiting the Cost Details reports and asks to wait about <hours and minutes>. No amount is estimated.
+Exposure overview: <subscription(s)>. The billed cost is not available yet: Azure is rate-limiting the cost requests and asks to wait about <hours and minutes>. No amount is estimated.
 
 | Category | Rule | Increase | Region | Resources |
 
@@ -115,9 +143,9 @@ You can ask me to resume in this thread after the wait, or choose a resource: I 
 
 The three months are only the default. When the customer asks for another period, such as the last day, the last 7 days, or two named dates, use it for the reports, the deep dive, and the CSV.
 
-- **Dates**: apply the relative-period rules of skill `azure-cost-details`, state the exact first and last day, and split by calendar month: one report per subscription and month.
-- **Normalize**: `overview` divides every cost by `months`. Compute it with `months_in(periods)` of the code below, passing the `(first day, last day)` of every report. A whole calendar month counts as 1 and any other span counts `days x 12 / 365`, so 7 days are about 0.23 months. Never pass the number of reports for a partial month: that shows a week of cost as a monthly cost.
-- **Label**: a period that is not made of whole months gives a **projection**, not an observed month. It assumes that the observed days repeat all month, and it is sensitive to weekends, one-off charges, and resources started or stopped in the period. Say so in the answer and pass `note` to `write_csv`.
+- **Dates**: apply the relative-period rules of skill `azure-cost-details`, state the exact first and last day, and split by calendar month: one report per subscription and month. The Query tool takes any span up to 366 days in one call.
+- **Normalize**: `overview` divides every cost by `months`. Compute it with `months_in(periods)` of the code below, passing the `(first day, last day)` of every report or query. A span from the first to the last day of whole calendar months counts those months (three months in one query count 3), and any other span counts `days x 12 / 365`, so 7 days are about 0.23 months. Never pass the number of reports for a partial month: that shows a week of cost as a monthly cost.
+- **Label**: a period that is not made of whole months gives a **projection**, not an observed month. It assumes that the observed days repeat all month, and it is sensitive to weekends, one-off charges, and resources started or stopped in the period. Say so in the answer: `is_projection(periods)` tells when, and the CSV note is written for you.
 - **Recent days**: costs of the last 1 to 2 days can be incomplete, so the figures may be understated. Say so when the period ends in that window. `empty` means no data yet, not zero cost.
 
 ## 3. Calculate in the sandbox
@@ -163,16 +191,27 @@ def cents(value):
     return D(value).quantize(D("0.01"), rounding=ROUND_HALF_UP)
 
 
+def whole_months(first, last):
+    return first <= last and first.day == 1 and last.day == calendar.monthrange(last.year, last.month)[1]
+
+
 def months_in(periods):
-    """Months covered by inclusive ISO (first, last) day pairs, one pair per report.
-    A whole calendar month counts as 1; any other span counts days x 12 / 365."""
+    """Months covered by inclusive ISO (first, last) day pairs, one pair per report or query.
+    A span from the first to the last day of whole calendar months counts those months
+    (one month, or three months in one query); any other span counts days x 12 / 365."""
     total = D(0)
     for start, end in periods:
         first, last = date.fromisoformat(start), date.fromisoformat(end)
-        whole = ((first.year, first.month) == (last.year, last.month) and first.day == 1
-                 and last.day == calendar.monthrange(last.year, last.month)[1])
-        total += D(1) if whole else D((last - first).days + 1) * 12 / 365
+        if whole_months(first, last):
+            total += D((last.year - first.year) * 12 + last.month - first.month + 1)
+        else:
+            total += D((last - first).days + 1) * 12 / 365
     return total
+
+
+def is_projection(periods):
+    """True when a span is not made of whole calendar months: the monthly values are projections."""
+    return any(not whole_months(date.fromisoformat(s), date.fromisoformat(e)) for s, e in periods)
 
 
 def build_row(res, currency, item, months, period_start, amortized):
@@ -235,15 +274,19 @@ def build_row(res, currency, item, months, period_start, amortized):
 
 
 def overview(exposure, costs, months=1, period_start="", amortized=None, top=5):
-    months, amortized = D(months), amortized or {}
+    months, amortized = D(months), dict(amortized or {})
     billed = defaultdict(dict)
     for rec in costs:
         rid = (rec.get("resource_id") or "").lower()
         if rid:
             item = billed[rid].setdefault(rec["currency"], {"cost": D(0), "models": set(), "services": set()})
-            item["cost"] += D(rec["cost"])
+            if rec.get("cost") is not None:
+                item["cost"] += D(rec["cost"])
             item["models"].update(rec.get("pricing_models") or [])
             item["services"].update(str(s).lower() for s in rec.get("service_names") or [])
+            if rec.get("amortized_cost") is not None:
+                key = (rid, rec["currency"])
+                amortized[key] = amortized.get(key, D(0)) + D(rec["amortized_cost"])
     rows = [build_row(res, currency, item, months, period_start, amortized)
             for res in exposure
             for currency, item in (billed.get(res["id"].lower()) or {"": None}).items()]
@@ -324,16 +367,22 @@ def verify_csv(path, summary):
 Run it like this, passing `months` (from `months_in`) and `period_start` (the first day of the period):
 
 ```python
-periods = [("2026-07-01", "2026-07-31"), ("2026-08-01", "2026-08-31"), ("2026-09-01", "2026-09-30")]  # one pair per report
+periods = [("2026-07-01", "2026-07-31"), ("2026-08-01", "2026-08-31"), ("2026-09-01", "2026-09-30")]  # one pair per report, or one pair per query
+used_query = False  # True when the costs come from AzureCostDetails-Query
 months = months_in(periods)
-note = "" if months == len(periods) else "Monthly values are projected from the observed days at constant consumption."
+notes = []
+if is_projection(periods):
+    notes.append("Monthly values are projected from the observed days at constant consumption.")
+if used_query:
+    notes.append("Billed cost source: Cost Management Query API, aggregated by resource, Virtual Machines and Storage meters only.")
 summary, rows = overview(exposure, costs, months=months, period_start=periods[0][0], amortized=amortized)
-write_csv(rows, "/mnt/data/azure_price_increase_impact.csv", note=note)
+write_csv(rows, "/mnt/data/azure_price_increase_impact.csv", note=" ".join(notes))
 print(verify_csv("/mnt/data/azure_price_increase_impact.csv", summary))
 print(json.dumps(summary, default=str, indent=2))
 ```
 
 - `base` is the monthly billed cost: the summed cost divided by `months`, so an average for whole months and a projection for any other period. `delta` is `base x pct / 100`, and the annual figure is the monthly figure times 12. Every row is rounded to the cent, and the totals add the rounded rows, so the file and the summary match exactly.
+- Records from `AzureCostDetails-Query` carry `cost` and `amortized_cost` together: paste them as `costs` and leave `amortized` empty. A resource covered by a reservation can have no actual cost and still appears with `amortized_cost`.
 - Share the CSV only when `problems` is empty: the file exists, has one row per result, and its totals per currency equal the summary. Otherwise fix the cause first. Save the file with the code tool (the Python tool docs use `/mnt/data`) and confirm that it exists before giving the download link.
 - Rows with `upper_bound` (storage accounts, Azure NetApp Files, Elastic SAN) are labelled as an upper bound: the excluded meters can be split only in the deep dive.
 - A currently deallocated VM with historical billing is a **scenario**, reported in `scenario_deallocated` and never added to the totals. A resource with no billed usage appears in the CSV with `CostSource` `None` and no amounts.
@@ -344,7 +393,8 @@ print(json.dumps(summary, default=str, indent=2))
 Render in the customer's language. Keep it short: one table row per category and a shortlist of 5.
 
 ```text
-Overview: <subscription(s)>, <first day> to <last day> (<3 complete months | n days>), billed cost (ActualCost[ and AmortizedCost], <currency>)
+Overview: <subscription(s)>, <first day> to <last day> (<n complete months | n days>), billed cost (ActualCost[ and AmortizedCost], <currency>)
+Billed cost source: <Cost Details | Cost Management Query API, aggregated by resource, Virtual Machines and Storage meters only>
 With the change effective <date>, the affected resources go from <today>/month to <after>/month: +<delta>/month, about +<delta_year>/year.
 
 | Category | Resources | Today/month | After/month | Difference/month |
@@ -352,6 +402,11 @@ With the change effective <date>, the affected resources go from <today>/month t
 What drives it:
 - v1/v2 series (+25% in every region): <n> resources, +<delta>/month
 - <region> (+<pct>%): <n> resources, +<delta>/month
+
+Commitments (only when reservations or savings plans appear):
+- <n> reservations and <m> savings plans visible and active; <k> end before <date>, so their covered usage is affected from <date>.
+- <an underused commitment, with its 30-day utilization, if any>
+[If the details could not be read] The commitment details could not be read: <missing role>. Coverage is known only from the billing data.
 
 Not included in those totals:
 - <n> currently deallocated VMs. If they were restarted at the historical level they would cost <x>/month, <y> after the change. Shown as a scenario only.
@@ -368,7 +423,7 @@ You can also give me a name, a resource ID, a category, a region, or a resource 
 
 ## 5. General cost overview (no price change)
 
-1. Request `AzureCostDetails-Report` (`ActualCost`) for each subscription in scope, for the last three complete months or the period asked (one report per calendar month).
-2. For each report call `AzureCostDetails-Read` with `view="resources"`, `page_size=10`, `offset=0`. Use `totals_by_currency` for the total of the report and `records` for the top 10. Derive the resource type from the segment after `/providers/` in the resource ID.
+1. Request `AzureCostDetails-Report` (`ActualCost`) for each subscription in scope, for the period asked or set by the custom instructions (one report per calendar month). If Cost Details is throttled or not supported, or the period needs more than three reports, use `AzureCostDetails-Query` instead (see "Query path").
+2. For each report call `AzureCostDetails-Read` with `view="resources"`, `page_size=10`, `offset=0`. Use `totals_by_currency` for the total of the report and `records` for the top 10. Derive the resource type from the segment after `/providers/` in the resource ID. With the Query tool, one call covers the whole period: `metric="ActualCost"`, `group_by="resource"`, `page_size=10`, no `meter_categories`. `totals_by_currency.cost` is the total, and `records` are already sorted by cost. For a split by service, call it with `group_by="meter"` and no `resource_id`.
 3. Answer with the total per currency for the period and, for whole months, the monthly average; the top 10 (name, type, cost, share of the total, pricing models); the unattributed bucket when present; and the period stated explicitly. Do not project a month from a shorter period unless the customer asks, and then label it as a projection.
 4. Offer a deep dive on one resource, or the impact of an announced price change on the same resources.

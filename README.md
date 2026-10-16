@@ -8,7 +8,7 @@ A growing collection of practical, reusable utilities for assessing, operating, 
 
 | Utility | Purpose | Azure SRE Agent | Download |
 |---|---|---|---|
-| [Azure Cost Increase Assessment](./utilities/azure-cost-increase-assessment/) | Inventories affected Azure compute and storage resources and estimates the monthly and annual impact of the price changes effective 1 February 2027. Includes an Azure SRE Agent plugin that gives a short overview first and a deep dive on the resource you choose. | [Complete setup guide](./utilities/azure-cost-increase-assessment/#azure-sre-agent-plugin): permissions, Python tools, plugin, custom instructions | [Download ZIP](./downloads/Azure-Cost-Increase-Assessment-v6.zip) |
+| [Azure Cost Increase Assessment](./utilities/azure-cost-increase-assessment/) | Inventories affected Azure compute and storage resources and estimates the monthly and annual impact of the price changes effective 1 February 2027. Includes an Azure SRE Agent plugin that gives a short overview first, with billed cost and active reservations and savings plans, and a deep dive on the resource you choose. | [Complete setup guide](./utilities/azure-cost-increase-assessment/#azure-sre-agent-plugin): permissions, Python tools, plugin, custom instructions | [Download ZIP](./downloads/Azure-Cost-Increase-Assessment-v6.zip) |
 
 ## Quick start
 
@@ -39,6 +39,12 @@ AzureUtilities/
         |-- media/
         |   `-- regional-and-vm-price-increases-demo.gif
         `-- skills/
+            |-- azure-commitments/
+            |   |-- SKILL.md
+            |   |-- references/
+            |   |   `-- AzureCommitments-Guida.md
+            |   `-- scripts/
+            |       `-- AzureCommitments-List.py
             |-- azure-cost-advisor/
             |   |-- SKILL.md
             |   `-- references/
@@ -50,6 +56,7 @@ AzureUtilities/
             |   |-- references/
             |   |   `-- AzureCostDetails-Guida.md
             |   `-- scripts/
+            |       |-- AzureCostDetails-Query.py
             |       |-- AzureCostDetails-Read.py
             |       `-- AzureCostDetails-Report.py
             `-- azure-cost-increase-assessment/

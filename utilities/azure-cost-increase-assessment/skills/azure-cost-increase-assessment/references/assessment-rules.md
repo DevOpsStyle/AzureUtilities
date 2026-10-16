@@ -75,7 +75,7 @@ These patterns also exclude names with a `v2` suffix. The notice lists only the 
 
 ## Cost Management aggregation
 
-The billed cost comes from the Cost Details tools. `AzureCostDetails-Read` with `view="resources"` returns, for each resource and currency, the total cost, the pricing models, and the service names present. It does not split meter subcategories: do that with `view="rows"` for one resource at a time (see the skill `azure-cost-advisor`, `references/deep-dive-playbooks.md`). In bulk, the baseline of storage accounts, Azure NetApp Files, and Elastic SAN is therefore an upper bound.
+The billed cost comes from the Cost Details tools, or from `AzureCostDetails-Query` when they are throttled or not supported. `AzureCostDetails-Read` with `view="resources"` returns, for each resource and currency, the total cost, the pricing models, and the service names present. The Query tool returns `cost`, `amortized_cost`, and the pricing models, and leaves the other meter categories out of the cost when `meter_categories` is set. Neither splits meter subcategories in bulk: do that for one resource, with `view="rows"` or `group_by="meter"` (see the skill `azure-cost-advisor`, `references/deep-dive-playbooks.md`). In bulk, the baseline of storage accounts, Azure NetApp Files, and Elastic SAN is therefore an upper bound.
 
 Filter Cost Management data to the `Virtual Machines` and `Storage` meter categories. Ignore other charges associated with the same resource ID, such as Microsoft Defender. In bulk, a resource whose service names include other categories is flagged because its baseline may be overstated.
 
@@ -147,7 +147,7 @@ Do not use a list-price fallback for disk snapshots, Storage Accounts, Azure Net
 - Past consumption is treated as the forecast; growth, decommissioning, and autoscale changes are not projected.
 - Cost Management data can lag by 24 to 48 hours.
 - Spot usage is not included in the billed baseline.
-- Reservation expiry dates are not read; manually verify reservations that expire before 1 February 2027.
+- Reservation expiry dates are read with `AzureCommitments-List` when the identity has the tenant-level `Reservations Reader` role (and `Savings plan reader` for savings plans). Without them the expiry is not verified: manually check the reservations that expire before 1 February 2027.
 - Dedicated Hosts, Azure Batch pools, Azure File Sync, Azure Backup, Azure VMware Solution, and PaaS compute are outside scope.
 - Storage estimates depend on the billed meter mix.
 - If the Retail Prices API starts returning prices already effective on or after 1 February 2027, applying the increase again can double count. Flag such rows for manual review.

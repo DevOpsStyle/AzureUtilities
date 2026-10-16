@@ -1,6 +1,6 @@
 # Deep-dive playbooks
 
-Use after the customer picked a resource or named one. Lead the answer with the verdict. Reuse the reports, `operation_url` values, and CSV column names already obtained in the conversation, and the same three months as the overview unless the customer asks for another period.
+Use after the customer picked a resource or named one. Lead the answer with the verdict. Reuse the reports, `operation_url` values, and CSV column names already obtained in the conversation, and the same period as the overview unless the customer asks for another period.
 
 ## 1. Resolve the resource
 
@@ -113,7 +113,7 @@ If the size does not match a documented family, apply "any other series" and say
 
 ## 4. Billing evidence
 
-1. **Report**: reuse the `operation_url` of the subscription and period from the overview. Otherwise generate it (`ActualCost`, the same period as the overview: by default the three complete months, one report per month). If a savings plan appears, also use the `AmortizedCost` report of the same period.
+1. **Report**: reuse the `operation_url` of the subscription and period from the overview. Otherwise generate it (`ActualCost`, the same period as the overview: one report per calendar month). If a savings plan appears, also use the `AmortizedCost` report of the same period. If Cost Details is throttled or not supported, use the Query alternative after the helpers below.
 2. **Column names**, once per subscription: call `AzureCostDetails-Read` with `view="rows"`, `resource_id=<the resource ID>`, `page_size=1`, and read `available_columns`.
 3. **Rows**: for each month call `AzureCostDetails-Read` with `view="rows"`, the same `resource_id`, `page_size=200`, and `columns` limited to those of this list that exist in `available_columns`: Date, MeterCategory, MeterSubCategory, MeterName, Quantity, UnitOfMeasure, UnitPrice, EffectivePrice, CostInBillingCurrency, BillingCurrencyCode, PricingModel, ChargeType, ReservationId, ReservationName, ProductOrderId, Term, BenefitId, BenefitName. For a virtual machine also add `AdditionalInfo`.
 4. **Summarize in the sandbox** with these helpers. Paste the rows, never add them by hand.
@@ -171,7 +171,35 @@ def sku_changed(vm_size, rows):
             billed.update(size_key(part) for part in pick(r, "MeterName").split("/") if part.strip())
     current = size_key(vm_size)
     return {"current": current, "billed": sorted(billed), "possible_resize": bool(billed) and current not in billed}
+
+
+def query_breakdown(records, legacy_blob_excluded=False):
+    """Meter groups from AzureCostDetails-Query (group_by="meter"): excluded storage meters are matched by subcategory name."""
+    patterns = EXCLUDED + (["^Blob Storage"] if legacy_blob_excluded else [])
+    return [{"meter_subcategory": r["meter_subcategory"], "pricing_model": r["pricing_model"], "currency": r["currency"],
+             "excluded_meter": any(re.search(p, r["meter_subcategory"], re.I) for p in patterns),
+             "cost": r["cost"] or "0", "amortized_cost": r["amortized_cost"] or "0"} for r in records]
+
+
+def commitment_share(groups):
+    """Share of the amortized cost by pricing model, as a percentage. Use one currency at a time."""
+    total = sum(D(g["amortized_cost"]) for g in groups)
+
+    def share(model):
+        part = sum(D(g["amortized_cost"]) for g in groups if g["pricing_model"] == model)
+        return (part / total * 100).quantize(D("0.1")) if total else None
+
+    return {"on_demand_pct": share("OnDemand"), "reservation_pct": share("Reservation"), "savings_plan_pct": share("SavingsPlan")}
+
+
+def query_baseline(groups, months):
+    """Monthly baseline: on-demand cost without excluded meters, plus the amortized cost of savings plans."""
+    on_demand = sum(D(g["cost"]) for g in groups if g["pricing_model"] == "OnDemand" and not g["excluded_meter"])
+    plan = sum(D(g["amortized_cost"]) for g in groups if g["pricing_model"] == "SavingsPlan")
+    return ((on_demand + plan) / D(months)).quantize(D("0.01"))
 ```
+
+**Query alternative.** When Cost Details is throttled or not supported, call `AzureCostDetails-Query` once for the whole period with `group_by="meter"`, `resource_id=<the resource ID>`, `metric="both"`, and `meter_categories="Virtual Machines,Storage"`. It returns one record per meter subcategory and pricing model, with `cost` and `amortized_cost`. Summarize it with `query_breakdown`, `query_baseline` (pass `months` as in the overview), and `commitment_share`. Say what it cannot show: quantities, unit prices, tags, `ReservationId`, `BenefitId`, and the VM size. The resize check then sees only a change of meter family (`Dsv5 Series`), and the reserved share is a share of amortized cost, not of hours. State that the source is the Cost Management Query API.
 
 5. **Baseline** for the resource, as a monthly figure over the period read: the sum of `cost` of the groups with `pricing_model == "OnDemand"`, `charge_type == "Usage"`, a `meter_category` in the profile scope, and `excluded_meter` false, divided by `months`, the value used for the overview (otherwise compute it with `months_in` of the [overview workflow](./overview-workflow.md#3-calculate-in-the-sandbox)). When `SavingsPlan` groups exist, add the cost of those groups from the `AmortizedCost` report. A reservation group is not part of the baseline. For a period shorter than a month the figure is a projection: label it as such.
 6. **Compare** the billed size with the current size (`sku_changed`) for a virtual machine, and flag a possible resize: the cost may not reflect the current size. The rule always follows the current size.
@@ -183,17 +211,16 @@ def sku_changed(vm_size, rows):
 | Evidence in the rows | Rule |
 |---|---|
 | No `Reservation` or `SavingsPlan` rows | The increase starts on the effective date |
-| `SavingsPlan` rows | The increase applies from the effective date: the covered VMs cost more, so the commitment is consumed sooner. Name the plan (`BenefitName`); no expiry lookup is needed |
+| `SavingsPlan` rows | The increase applies from the effective date: the covered VMs cost more, so the commitment is consumed sooner. Name the plan (`BenefitName`) and read it with `AzureCommitments-List` |
 | `Reservation` rows | The increase on the reserved part is deferred until the reservation expires |
 | `Spot` rows | Not addressed by the announcement. No estimate |
 
-For a reservation, size the coverage with `reservation_share` and read its expiry (best effort) with a read-only call:
+For a reservation or a savings plan, read the commitment with `AzureCommitments-List` (skill `azure-commitments`) and size the coverage with `reservation_share` (Cost Details rows) or `commitment_share` (Query path):
 
-```text
-az rest --method get --url "https://management.azure.com/providers/Microsoft.Capacity/reservations?api-version=2022-11-01&take=100"
-```
-
-Follow `nextLink` if present. Match the item whose `id` ends with the `ReservationId` from the rows, or whose `properties.displayName` equals `ReservationName`. Read `properties.expiryDate`, `properties.term`, `properties.reservedResourceType`, `properties.renew`, and `properties.userFriendlyRenewState`. The call needs reservation read access: if it is denied, say the expiry could not be verified and point to Portal > Reservations.
+- **With billing rows**: pass `commitment_id` (the `ReservationId`, or the GUID at the end of the `BenefitId`), `subscription_id`, and `effective_date`. The match is confirmed by the billing data.
+- **Without them** (Query path, or rows without these columns): filter by `reserved_resource_type`, `location`, and `sku`, with `subscription_id` and `effective_date`. These filters apply to reservations only: savings plans stay in the result, because they are not tied to a type, region, or size, and any of them whose scope includes the subscription (`applies_to_subscription` `yes`, `resource_group`, or `possible`) may cover a VM. A match is only a candidate that could cover the resource: write "possible coverage, not confirmed".
+- **Read**: `name`, `term`, `expiry_date`, `days_to_expiry`, `covers_effective_date`, `renew`, `applied_scope_type` and `applies_to_subscription`, `quantity` and `instance_flexibility` for a reservation, `commitment` (hourly amount) for a savings plan, and `utilization`.
+- **Unverified**: a `forbidden`, `partial`, or empty result means that the commitment could not be read. Say it, name the missing role, and keep the billing rows as the only proof of coverage.
 
 Timeline for the reserved part:
 
@@ -201,6 +228,10 @@ Timeline for the reserved part:
 - Expiry unknown: say "deferred until expiry, not verified".
 - Renewal and exchange terms are not estimated.
 - Give two phases when both apply: the on-demand part from the effective date, and the reserved part from its own date. Do not estimate the reserved part after expiry; the reservation price is no longer the reference.
+
+Savings plan: the covered VMs cost more from the effective date, so the commitment is consumed sooner. `utilization` shows the room it has. Close to 100% means that the commitment is already used, so the extra cost is billed at the new on-demand rates. Well below 100% means that the commitment absorbs part of it. This is an indication, never a promised saving.
+
+Underused commitments (a 30-day utilization well below 100%) are worth a mention as something to review with the account team, without proposing any change.
 
 ## 6. Related resources
 
@@ -214,7 +245,7 @@ Render in the customer's language and lead with the first line.
 <name> - <category>, <region>, <size or SKU>
 Impact: <Affected | Not affected | Deferred | Partly affected> - <one sentence: the matched rule, the facts, the percentage>.
 Cost: <today>/month -> <after>/month from <date> (+<delta>/month, about +<delta_year>/year). Basis: <period (a projection when shorter than a month), metric, meters counted>.
-Commitments: <none | reservation <name> covering <x>%, expires <date or "not verified"> | savings plan <name>>.
+Commitments: <none | reservation <name> (<term>, <scope>, <quantity> x <sku>) covering <x>%, expires <date or "not verified">, 30-day utilization <u>% | savings plan <name> (<amount>/hour, expires <date>, 30-day utilization <u>%)>. <"possible coverage, not confirmed" when the link rests on type, SKU, and region>.
 Related resources: <attached disks, with cost and increase if the customer asked>.
 To check: <resize signal, deallocated scenario, unattached state, missing data, assumptions about future usage>.
 Options to evaluate: <only those supported by the facts>.

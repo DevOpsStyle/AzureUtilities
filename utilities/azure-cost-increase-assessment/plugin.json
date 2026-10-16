@@ -1,6 +1,6 @@
 {
   "name": "azure-cost-increase-assessment",
-  "description": "Azure cost advisor for Azure SRE Agent: a short overview of current cost and the impact of announced price increases, then a deep dive on the chosen resource. Includes the price-increase rules and complete Azure Cost Details retrieval. Read-only.",
+  "description": "Azure cost advisor for Azure SRE Agent: a short overview of current cost and the impact of announced price increases, then a deep dive on the chosen resource. Includes the price-increase rules, billed-cost retrieval (Cost Details, with the Cost Management Query API as a labelled second source), and active reservations and savings plans. Read-only.",
   "skills": [
     "skills/"
   ]
