@@ -16,7 +16,7 @@ This is an estimate, not a bill or commercial quote. Always state that the final
 - Use only read operations.
 - Use the built-in Azure CLI read tool for Azure Resource Graph requests.
 - Obtain billed cost with the Cost Details tools `AzureCostDetails-Report` and `AzureCostDetails-Read`. When they are throttled (HTTP 429) or not supported for the subscription, `AzureCostDetails-Query` is the only permitted second source, and its use is always stated. The read-only CLI channel rejects Cost Management POST requests: do not retry them through the CLI, never route them through a write tool, and never substitute an estimate silently.
-- Run the bundled cost and commitment scripts in the sandbox terminal, then parse the results, calculate, and generate the report with code. Load `azure-cost-details` and `azure-commitments` and follow their "Running the bundled scripts" procedure (installed script, ARM token file, JSON input and output files); their operation names are not registered tools.
+- Run the bundled cost and commitment scripts in the sandbox terminal, then parse the results, calculate, and generate the report with code. Load `azure-cost-details` and `azure-commitments` and follow their "Running the bundled scripts" procedure (installed script, the agent's managed identity, JSON input and output files); their operation names are not registered tools.
 - Never resize, stop, delete, retag, or otherwise modify a resource.
 - Never invent missing cost, currency, reservation, or price data.
 - Preserve each source currency. Do not combine totals from different currencies without separating and warning about them.
@@ -115,7 +115,7 @@ Return:
 ## Failure handling
 
 - If Azure Resource Graph access fails, stop and report that Reader access is required.
-- If a cost or commitment operation is unavailable, load its owning skill and resolve the bundled script with its agent-managed fallback. On `auth_required` get a new ARM token as that skill describes. Report a missing script, execution capability, dependency, or Azure authentication explicitly. Do not ask the customer to create tools, and do not fall back to a CLI POST or a silent estimate.
+- If a cost or commitment operation is unavailable, load its owning skill and resolve the bundled script with its agent-managed fallback. On `auth_required` follow that skill's authentication steps. Report a missing script, execution capability, dependency, or Azure authentication explicitly. Do not ask the customer to create tools, and do not fall back to a CLI POST or a silent estimate.
 - If Cost Details fails for some subscriptions, continue with the successful ones and clearly list the incomplete ones. For a throttled or unsupported subscription make one attempt with `AzureCostDetails-Query` and state the source. A retail list-price scenario is allowed only for VMs and managed disks, labelled "hypothetical, not billed".
 - If complete billing evidence stays unavailable for all subscriptions, report the limitation and do not present a complete forecast, and do not imply that discounts, Azure Hybrid Benefit, commitments, or actual running hours were considered.
 - If the Azure CLI read tool or code execution is unavailable, explain which capability is missing and provide the equivalent local command from the utility documentation. Do not return a success-shaped estimate.

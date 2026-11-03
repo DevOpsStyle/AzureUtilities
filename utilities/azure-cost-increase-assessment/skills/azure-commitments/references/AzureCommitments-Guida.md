@@ -1,6 +1,6 @@
 # Azure Commitments per Azure SRE Agent
 
-`AzureCommitments-List.py` viene installato da GitHub con il plugin, nella cartella `scripts/` della skill: non va caricato, ricreato o collegato in Agent Canvas. L'agente lo esegue nel terminale del sandbox con `--input <file JSON UTF-8>` (oppure JSON da stdin), `--output <file>` e `--token-file <file>`; resta compatibile con `main(...) -> dict` dei Python tool esistenti, che però non servono più. Elenca le **reservation** e i **savings plan** attivi che l'identità gestita può leggere, così l'agente può rispondere con dati precisi: scope, durata, scadenza, rinnovo, impegno orario dei savings plan e utilizzo.
+`AzureCommitments-List.py` viene installato da GitHub con il plugin, nella cartella `scripts/` della skill: non va caricato, ricreato o collegato in Agent Canvas. L'agente lo esegue nel terminale del sandbox con `--input <file JSON UTF-8>` (oppure JSON da stdin) e `--output <file>`, autenticato come la propria identità gestita; `--token-file <file>` serve solo come ripiego. Resta compatibile con `main(...) -> dict` dei Python tool esistenti, che però non servono più. Elenca le **reservation** e i **savings plan** attivi che l'identità gestita può leggere, così l'agente può rispondere con dati precisi: scope, durata, scadenza, rinnovo, impegno orario dei savings plan e utilizzo.
 
 La panoramica e il deep dive del plugin lo usano per dire quali impegni esistono, quando scadono, se sono ancora attivi alla data dell'aumento e quanto sono utilizzati.
 
@@ -9,11 +9,11 @@ La panoramica e il deep dive del plugin lo usano per dire quali impegni esistono
 L'agente segue la procedura "Running the bundled script" di [SKILL.md](../SKILL.md), dalla radice del workspace del sandbox:
 
 1. Usa la copia installata in `runtime-content/skills/plugins/<installation>/live/azure-commitments/scripts/`. Solo se manca, la legge con `read_skill_file` e la crea con `CreateFile` in `tmp/azure-commitments/scripts/`, senza interventi del cliente.
-2. Riusa il token ARM di `tmp/azure-cost/arm-token`, condiviso con `azure-cost-details`. Se manca, lo ottiene con lo strumento di sola lettura `RunAzCliReadCommands` (`az account get-access-token --resource https://management.azure.com --subscription <subscription-id> --query accessToken -o tsv`) e lo salva solo in quel file, senza mostrarlo. Senza `--token-file` lo script usa `DefaultAzureCredential`.
-3. Salva i parametri JSON in `tmp/azure-cost/` ed esegue, con `RunInTerminal`, `python3 "<SKILL_DIR>/scripts/AzureCommitments-List.py" --token-file tmp/azure-cost/arm-token --input tmp/azure-cost/commitments-1.json --output tmp/azure-cost/commitments-1.out.json`.
-4. Analizza nel sandbox il file di output (il terminale mostra solo un riepilogo) e riusa il risultato nella conversazione. Con `auth_required: true` prende un nuovo token e ripete una volta; `forbidden` indica invece un ruolo mancante.
+2. Lo script usa l'identità gestita dell'agente tramite `DefaultAzureCredential` (il workspace imposta `AZURE_CLIENT_ID`): non serve configurare nulla. Solo come ultima risorsa, se l'identità non è disponibile, riusa il token di `tmp/azure-cost/arm-token`, condiviso con `azure-cost-details`, oppure lo ottiene con lo strumento di sola lettura `RunAzCliReadCommands` (`az account get-access-token --resource https://management.azure.com --subscription <subscription-id> --query accessToken -o tsv`) e lo salva solo in quel file, senza mostrarlo.
+3. Salva i parametri JSON in `tmp/azure-cost/` ed esegue, con `RunInTerminal`, `python3 "<SKILL_DIR>/scripts/AzureCommitments-List.py" --input tmp/azure-cost/commitments-1.json --output tmp/azure-cost/commitments-1.out.json` (con `--token-file tmp/azure-cost/arm-token` solo dopo il ripiego del punto 2).
+4. Analizza nel sandbox il file di output (il terminale mostra solo un riepilogo) e riusa il risultato nella conversazione. Con `auth_required: true` segue il punto 2; `forbidden` indica invece un ruolo mancante.
 
-Il plugin non assegna ruoli: assegna all'identità gestita dell'agente i due ruoli del paragrafo successivo. Per aggiornare il codice aggiorna il plugin; non serve ricreare o collegare tool.
+I terminali e i file del sandbox sono *workspace tools*: devono essere attivi nell'agente (**Experimental Settings**). Il plugin non assegna ruoli: assegna all'identità gestita dell'agente i due ruoli del paragrafo successivo. Per aggiornare il codice aggiorna il plugin; non serve ricreare o collegare tool.
 
 Riepilogo del contratto, utile solo se si vuole ancora usare lo script come Python tool di Agent Canvas:
 

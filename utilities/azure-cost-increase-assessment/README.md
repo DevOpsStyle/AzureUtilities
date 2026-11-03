@@ -116,7 +116,7 @@ Install the plugin from GitHub and the skills arrive with everything they run: i
 | 2 | Skills and bundled scripts | Four skills; the four Python scripts in the `scripts/` folder of the skill that runs them | Installed together from GitHub by this plugin |
 | 3 (optional) | Custom instructions | Routing and the default reporting period for every conversation | Pasted in the agent's general instructions, only to override the skill defaults |
 
-At run time the agent finds the installed scripts in its sandbox, gets its own Azure Resource Manager (ARM) token with its read-only Azure CLI tool, and runs the scripts: see [How the bundled scripts run](#how-the-bundled-scripts-run).
+At run time the agent finds the installed scripts in its sandbox and runs them; they authenticate as the agent's own managed identity. See [How the bundled scripts run](#how-the-bundled-scripts-run), which also links the Microsoft documentation of this behavior.
 
 The plugin imports four skills:
 
@@ -151,8 +151,8 @@ The example below shows the VM together with its OS disk, network interface, pub
 
 - An Azure SRE Agent in the **Running** state, and the **SRE Agent Administrator** or **Author** role on it
 - The **Plugins** page visible under **Builder** (**Build + setup > Extensions > Plugins** in newer portal versions)
-- Code execution in the agent sandbox, which runs the bundled scripts with `RunInTerminal` and writes the CSV (see step 4), with outbound access to `management.azure.com` and to the `*.blob.core.windows.net` links of the Cost Details reports. The sandbox preinstalls Python and `requests`
-- The built-in Azure CLI read tool (`RunAzCliReadCommands`): the skills use it for Azure Resource Graph and to get the agent's ARM token. Installing a plugin does not grant roles: step 1 does
+- **Workspace tools** turned on for the agent (**Experimental Settings**, see step 4): the skills run the bundled scripts with the sandbox terminal and file tools (`RunInTerminal`, `CreateFile`), which need outbound access to `management.azure.com` and to the `*.blob.core.windows.net` links of the Cost Details reports. The sandbox preinstalls Python, `requests`, and `azure-identity`
+- The built-in Azure CLI read tool (`RunAzCliReadCommands`): the skills use it for Azure Resource Graph and, only as a fallback, to get an ARM token. Installing a plugin does not grant roles: step 1 does
 - Subscriptions on an **Enterprise Agreement (EA)** or a **Microsoft Customer Agreement (MCA)** for the Cost Details scripts, which support only these. On other offers, or when Cost Details is rate-limited, the agent uses the Query script and says so (see "How the tools get the costs")
 - Permission to create role assignments on the subscriptions to analyse
 - To see reservations and savings plans: someone who can **elevate access** to grant two roles at tenant scope (Step 1). Without them the agent works, but reports the commitment details as not verified
@@ -231,7 +231,7 @@ For Azure cost questions and for the Azure VM and storage price increases effect
 
 Scope: default to the subscription established in the conversation (otherwise discover the accessible subscriptions and ask which to analyze) and the last complete calendar month. State both explicitly.
 
-Execution: AzureCostDetails-Report, AzureCostDetails-Read, AzureCostDetails-Query and AzureCommitments-List are Python scripts bundled with the skills, not registered tools. Load the owning skill and follow its "Running the bundled scripts" procedure: run the installed script in the sandbox, with the ARM token that you get through the Azure CLI read tool and save to a private file, and JSON input and output files. Never print the token. Do not ask the customer to upload, recreate or attach Python tools. Report unavailable execution capabilities or Azure authentication explicitly.
+Execution: AzureCostDetails-Report, AzureCostDetails-Read, AzureCostDetails-Query and AzureCommitments-List are Python scripts bundled with the skills, not registered tools. Load the owning skill and follow its "Running the bundled scripts" procedure: run the installed script in the sandbox as your managed identity, with JSON input and output files, and use the skill's token-file fallback only if that identity is unavailable. Never print a token. Do not ask the customer to upload, recreate or attach Python tools. Report unavailable execution capabilities or Azure authentication explicitly.
 
 Evidence: inventory VMs and separately billed disks, snapshots, and storage with read-only Azure Resource Graph queries. By default obtain billed cost through AzureCostDetails-Report and AzureCostDetails-Read: complete ActualCost for every month of the period, following every report page, plus AmortizedCost for the same months whenever reservation or savings-plan usage appears. Make one attempt with AzureCostDetails-Query when Cost Details is rate-limited (HTTP 429) or not supported for the subscription, or when the customer asks for it, and say which source you used and what it cannot show; if both are unavailable, stop and report the wait. Never repeat a throttled request, route a Cost Management POST through the CLI or a write tool, or silently substitute an estimate. Read the active reservations and savings plans (scope, term, expiry, utilization) with AzureCommitments-List, passing the effective date: an empty or partial result means "not verified", never "none exist".
 
@@ -250,7 +250,7 @@ What each paragraph does:
 |---|---|
 | Routing | Sends cost and price-increase questions to `azure-cost-advisor`, which uses the other three skills, and questions about reservations and savings plans to `azure-commitments` |
 | Scope | Fixes the defaults: the subscription of the conversation and the last complete calendar month, always stated |
-| Execution | Makes the agent run the four operations as the bundled scripts of the skills, with its own ARM token, instead of looking for Agent Canvas tools |
+| Execution | Makes the agent run the four operations as the bundled scripts of the skills, as its own managed identity, instead of looking for Agent Canvas tools |
 | Evidence | Read-only inventory. Billed cost through the Cost Details scripts, with `AzureCostDetails-Query` as a single, labelled second source when they are throttled, not supported, or on request. `AmortizedCost` when reservation or savings-plan usage appears. Active commitments through `AzureCommitments-List`, where an empty result is never read as "none" |
 | Rules | The rules of the PowerShell script: no stacking, exclusions, retail prices only as labelled hypothetical figures, a separate scenario for deallocated VMs, and flags for unattached disks, resized VMs, missing data, and future-usage assumptions |
 | Output | Overview first, with a commitments line, then a deep dive on the chosen resource. Long lists go to the CSV, which is verified and saved before it is shared |
@@ -262,7 +262,7 @@ The text sets **one complete month** as the default period, which makes fewer Co
 
 | Setting | Where | Why |
 |---|---|---|
-| Code execution | **Settings > Basics > Early access to features**, as documented at the time of writing | The skills run their bundled scripts in the sandbox terminal, and the agent computes totals and writes the CSV with code. Without code execution there are no billed costs and no CSV download link. Skip this if code execution already works |
+| Workspace tools | **Experimental Settings** | Required. The skills run their bundled scripts with the sandbox terminal and file tools, which [workspace tools](https://learn.microsoft.com/azure/sre-agent/agent-reasoning#workspace-tools) provide; without them Python runs only in the Code Interpreter, which cannot run the scripts. The agent also computes totals and writes the CSV with code: without code execution there are no billed costs and no CSV download link. No repository connection is needed |
 | Tool access policy | **Settings > Permissions** | If the agent asks for approval on every call, add *Allow* rules for `RunAzCliReadCommands` and for the sandbox terminal and file tools that the skills use (for example `RunInTerminal`, `CreateFile`, and `read_skill_file`). Do not allow `RunAzCliWriteCommands` for these tasks. Rules created for the old Python tools are no longer needed |
 | Run mode | **Settings > Basics** | In Review mode only Azure infrastructure operations ask for approval. These skills are read-only, so it does not get in the way |
 | Active skills | n/a | An agent keeps at most five skills active at a time. These four leave room for one more |
@@ -285,7 +285,7 @@ Open a **new chat thread** and try these in order.
    What will the Azure price increases effective 1 February 2027 cost us? Use the subscription <subscription-id>.
    ```
 
-   Expected: the agent states the subscription and the period (the last complete month, as set in the instructions), gets its ARM token with the Azure CLI read tool, requests the Cost Details report with the bundled script (this can take a few minutes, in several short runs), and answers with a short overview: today, after the change, the monthly and yearly difference, and a table per category. When reservations or savings plans appear it adds a commitments line. It lists what is not in the totals, gives a CSV download link, and asks which resource to analyse. It does not print a long resource list or the token.
+   Expected: the agent states the subscription and the period (the last complete month, as set in the instructions), requests the Cost Details report with the bundled script, authenticated as its managed identity (this can take a few minutes, in several short runs), and answers with a short overview: today, after the change, the monthly and yearly difference, and a table per category. When reservations or savings plans appear it adds a commitments line. It lists what is not in the totals, gives a CSV download link, and asks which resource to analyse. It does not print a long resource list or any token.
 
 3. **Deep dive**: answer with a number or name from the shortlist. Expected: the verdict on the first line (affected or not, and why: series or region), the billed cost, the reservation or savings plan that covers it, with its expiry and utilization, and the related disks.
 
@@ -317,7 +317,7 @@ If the agent skips a skill or a script, open the tool calls of the thread to see
 
 From the repository root, run `python -m unittest discover -s utilities/azure-cost-increase-assessment/tests -v`. It needs Python 3.10 or later and `requests`, and no Azure access.
 
-The tests check that the plugin finds the four skills, that every skill front matter is valid YAML and every skill link stays inside its skill folder, and that the scripts load without `azure-identity`. They run each script through its command line, as the agent does, with a token file and simulated Azure responses: report creation and resumption, the reading of every CSV row without sending the ARM token to Blob Storage, both Query metrics, the commitments, HTTP 401 and 403, the 80-second run budget (with slow Query pages and long Read waits on a simulated clock), and the invalid inputs that must never reach Azure. They do not verify the portal installation or live billing data.
+The tests check that the plugin finds the four skills, that every skill front matter is valid YAML and every skill link stays inside its skill folder, and that the scripts load without `azure-identity`. They run each script through its command line, as the agent does, with simulated Azure responses and the token-file fallback: report creation and resumption, the reading of every CSV row without sending the ARM token to Blob Storage, both Query metrics, the commitments, HTTP 401 and 403, the 80-second run budget (with slow Query pages and long Read waits on a simulated clock), and the invalid inputs that must never reach Azure. They do not verify the portal installation, the managed identity of a real agent, or live billing data.
 
 ### How the bundled scripts run
 
@@ -333,21 +333,28 @@ The four operations are Python scripts in the skill folders, installed with the 
 When a skill needs one of them, the agent:
 
 1. **Finds the installed script.** Azure SRE Agent copies every skill folder of the plugin into the agent sandbox under `runtime-content/skills/plugins/<installation>/live/<skill>/`, so the Report script is at `.../live/azure-cost-details/scripts/AzureCostDetails-Report.py`. The skill resolves the folder with a one-line shell loop (plugin, then Skill Builder, then Code Access) and runs the script in place. Only if the files are not on disk does the agent read them with `read_skill_file` and write them to `tmp/<skill>/scripts/` itself.
-2. **Gets an ARM token.** The sandbox terminal cannot run `az`, so the agent gets the access token of its own managed identity with its read-only Azure CLI tool (`az account get-access-token --resource https://management.azure.com`) and saves it to `tmp/azure-cost/arm-token`, the token-via-file pattern that sec-sre-ag uses for ARM calls from the sandbox. The scripts read it with `--token-file`. Without a token file they use `DefaultAzureCredential`, which needs `azure-identity` and an identity in the runtime.
+2. **Authenticates as its managed identity.** The workspace sandbox exposes the agent's managed identity to `DefaultAzureCredential` by setting `AZURE_CLIENT_ID`, so the scripts authenticate without any setup and no token passes through the conversation. Only if that identity is not available (`auth_required`), the agent falls back to the token-via-file pattern of sec-sre-ag: it gets the access token of its own identity with its read-only Azure CLI tool (`az account get-access-token --resource https://management.azure.com`), saves it to `tmp/azure-cost/arm-token`, and passes `--token-file`.
 3. **Runs the script** with `RunInTerminal`, a JSON request file, and an output file:
 
    ```bash
-   python3 "<SKILL_DIR>/scripts/AzureCostDetails-Report.py" --token-file tmp/azure-cost/arm-token --input tmp/azure-cost/report-1.json --output tmp/azure-cost/report-1.out.json
+   python3 "<SKILL_DIR>/scripts/AzureCostDetails-Report.py" --input tmp/azure-cost/report-1.json --output tmp/azure-cost/report-1.out.json
    ```
 
    The terminal shows only a short summary. The full JSON result, with the records, `operation_url`, and `resume_state`, stays in the output file, which the agent analyses with Python. Terminal commands stop after 120 seconds by default, so each run gets an 80-second budget (the command-line default), and the scripts return a resumable `pending` or `retry`, or a Query `split_required`, before it ends.
-4. **Handles authentication errors.** With `auth_required: true` (no credential, or HTTP 401 for an expired token) the agent gets a new token and repeats the call once. HTTP 403 means a missing role of step 1.
+4. **Handles authentication errors.** With `auth_required: true` the agent installs the bundled `requirements.txt` if `azure-identity` is missing, otherwise uses the token-file fallback; with a token file, HTTP 401 (expired token) gets one new token. HTTP 403 means a missing role of step 1.
 
 Security notes:
 
-- The token belongs to the agent's own managed identity and carries only its roles, which for these skills are the read-only roles of step 1. It appears in two tool calls of the thread (the output of the Azure CLI read tool and the file write), as in the token-via-file pattern of sec-sre-ag. The skills never print it, never write it outside `tmp/azure-cost/`, and never put it in the chat or the CSV. It expires on its own, and the sandbox files belong to the thread.
+- The scripts run as the agent's own managed identity, with only its roles, which for these skills are the read-only roles of step 1. Microsoft's guidance is not to bring tokens or secrets into the workspace sandbox: the token-file fallback does, so it is used only when the managed identity is unavailable. The token then appears in two tool calls of the thread (the output of the Azure CLI read tool and the file write); the skills never print it, never write it outside `tmp/azure-cost/`, and never put it in the chat or the CSV. To forbid the fallback, delete the token-file instructions from step 2 of "Running the bundled scripts" in the two executable skills.
 - The scripts contain no client ID, secret, storage key, or SAS. They never return the blob SAS links, and never forward the ARM token to Blob Storage.
 - Each script keeps its `main(...) -> dict` interface, so an Agent Canvas Python tool created earlier from it keeps working. The plugin does not need one.
+
+Microsoft documentation of this behavior:
+
+- [Plugin Marketplace, "Skill files included at runtime"](https://sre.azure.com/docs/capabilities/plugin-marketplace#skill-files-included-at-runtime): a plugin installation keeps the complete skill directory, nested folders and Python scripts included; supporting files are not loaded automatically, and `SKILL.md` references them so the agent reads or runs them with a tool.
+- [Agent Identity in Workspace](https://sre.azure.com/docs/capabilities/agent-identity-in-workspace): workspace tools authenticate as the agent's managed identity through `DefaultAzureCredential`.
+- [Workspace tools](https://learn.microsoft.com/azure/sre-agent/agent-reasoning#workspace-tools): terminal commands, file operations, and Python in the workspace sandbox, turned on in **Experimental Settings**.
+- [Create a skill, "Add supporting files"](https://learn.microsoft.com/azure/sre-agent/create-skill#add-supporting-files) and [Install a plugin from a URL](https://learn.microsoft.com/azure/sre-agent/install-plugin-from-url).
 
 ### Troubleshooting
 
@@ -361,9 +368,10 @@ Security notes:
 | The agent asks you to create a Python tool, upload a script, or attach tools to a skill | It follows obsolete instructions. Update the plugin, remove the old tool sentences from the custom instructions (step 3 has the current text), and start a new thread |
 | The agent behaves as before an update | Update or reinstall the plugin and start a new thread; scripts and instructions use the same installed commit. Check optional general instructions for obsolete manual-tool requirements |
 | The agent tries a Cost Management POST through the CLI and it is rejected | Expected: the read-only CLI channel blocks it. Load `azure-cost-details` and run its bundled scripts, not a CLI POST or a write tool |
-| `az: command not found` in the sandbox terminal | Expected: the terminal cannot run `az`. The skills use the Azure CLI read tool (`RunAzCliReadCommands`) for Resource Graph and for the ARM token, and the Python scripts for the cost APIs |
+| `az: command not found` in the sandbox terminal | Expected: the terminal cannot run `az`. The skills use the Azure CLI read tool (`RunAzCliReadCommands`) for Resource Graph, and the Python scripts, with the agent's managed identity, for the cost APIs |
+| The agent says that it cannot run terminal commands or create files | Workspace tools are off: turn them on in **Experimental Settings** (step 4) |
 | Resource Graph shows fewer resources than expected | The managed identity has `Reader` only on some resource groups. Assign `Reader` at subscription scope (step 1) |
-| A script returns `auth_required` or HTTP 401 | The token file `tmp/azure-cost/arm-token` is missing, expired, or not for ARM. The agent gets a new one with `RunAzCliReadCommands` and repeats the call once. If that tool asks for approval or is blocked, allow it (step 4) |
+| A script returns `auth_required` or HTTP 401 | The managed identity did not reach the script. With `error_type` `ModuleNotFoundError` the agent installs the bundled `requirements.txt`; otherwise it uses the token-file fallback through `RunAzCliReadCommands` (allow that tool in step 4 if it asks for approval). With a token file, HTTP 401 means that the token expired: the agent gets a new one once |
 | A cost script returns HTTP 403 or `forbidden` | The identity lacks `Cost Management Reader` on the subscription. Assign it (step 1) and wait for propagation. Both cost sources need the same role |
 | Cost Details returns another error for a subscription | The API supports EA and MCA only. The agent then uses `AzureCostDetails-Query` and says so. If both fail, it reports the errors and does not estimate |
 | A script returns `split_required` | The report or query is too large for one call, or the run budget ran out. For a Cost Details read the agent repeats it once with a longer budget when the terminal allows it, then asks for smaller, non-overlapping periods. For Query it uses shorter periods or one metric at a time |
@@ -371,7 +379,7 @@ Security notes:
 | `AzureCostDetails-Query` returns `retry` with HTTP 429 | The Query API has its own limits. The agent does not repeat it and does not use the CLI. Wait for the time stated and ask again in the same thread |
 | `AzureCostDetails-Query` returns `empty` | Cost Management returned no data for that period and filters, for example a period without Virtual Machines or Storage charges, or recent days that have not arrived yet. The agent reports it and never reads it as zero cost. Check the period and the category filter, or try again later |
 | The agent says an in-chat calculation is not practical | More than 200 affected resources, or more than 600 cost records (resources) in one month or one Query call. Narrow the scope (subscription, resource group, region, or category) or run the local script |
-| No CSV download link | Code execution is off: see step 4 |
+| No CSV download link | Workspace tools or code execution are off: see step 4 |
 | The agent asks for approval on every tool call | Add the *Allow* rules in step 4 |
 | The agent says that no reservation or savings plan is visible | The identity lacks `Reservations Reader` or `Savings plan reader` at tenant scope (step 1), or none exist. An empty list is not proof of absence. If the billing data shows `Reservation` or `SavingsPlan` pricing models, the commitments exist and the roles are missing |
 | `AzureCommitments-List` returns `forbidden` or `partial` | One of the two APIs is not readable: the result names the role. Assign it (step 1) and wait for propagation |

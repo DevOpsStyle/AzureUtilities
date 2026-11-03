@@ -24,7 +24,7 @@ Connect-AzAccount -Tenant <tenant-id-or-domain>
 
 See the [utility documentation](./utilities/azure-cost-increase-assessment/README.md) for permissions, parameters, calculation details, Azure Resource Graph queries, caveats, and the animated demo.
 
-For **Azure SRE Agent**, use **Builder > Plugins > Install from URL** with repository `DevOpsStyle/AzureUtilities` and path `utilities/azure-cost-increase-assessment`. The four skills and the Python scripts they run are installed together, because the scripts live in the skill folders. There is no script to upload, no Agent Canvas Python tool to create, and no Code Access connection: at run time the agent finds the installed scripts and gets its own Azure token. The only manual prerequisite is granting the Azure roles; see the [plugin guide](./utilities/azure-cost-increase-assessment/README.md#azure-sre-agent-plugin).
+For **Azure SRE Agent**, use **Builder > Plugins > Install from URL** with repository `DevOpsStyle/AzureUtilities` and path `utilities/azure-cost-increase-assessment`. The four skills and the Python scripts they run are installed together, because the scripts live in the skill folders. There is no script to upload, no Agent Canvas Python tool to create, and no Code Access connection: at run time the agent finds the installed scripts and runs them as its own managed identity. The only manual steps are granting the Azure roles and, if they are off, turning on workspace tools; see the [plugin guide](./utilities/azure-cost-increase-assessment/README.md#azure-sre-agent-plugin).
 
 ## Repository structure
 

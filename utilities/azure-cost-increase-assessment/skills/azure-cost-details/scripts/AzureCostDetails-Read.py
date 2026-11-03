@@ -1,5 +1,6 @@
-# Bundled skill script: the skill runs it in the agent sandbox with --input, --output and
-# --token-file (see SKILL.md). main() still works unchanged as an Agent Canvas Python tool.
+# Bundled skill script: the skill runs it in the agent sandbox with --input and --output, as the
+# agent's managed identity (DefaultAzureCredential), or with --token-file as a fallback (see
+# SKILL.md). main() still works unchanged as an Agent Canvas Python tool.
 credential = None  # Set by --token-file; otherwise DefaultAzureCredential on first use.
 
 

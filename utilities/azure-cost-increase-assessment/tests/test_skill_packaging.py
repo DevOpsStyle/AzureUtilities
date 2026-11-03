@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import sys
 import tempfile
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -246,6 +246,42 @@ class SkillPackagingTests(unittest.TestCase):
                 self.assertEqual(result["status"], "error")
                 self.assertTrue(result["auth_required"])
         self.assertEqual(azure.calls, [])
+
+    def test_without_a_token_file_the_scripts_use_the_agent_managed_identity(self):
+        # The workspace sets AZURE_CLIENT_ID, so DefaultAzureCredential is the agent's managed identity.
+        created = []
+
+        class DefaultAzureCredential:
+            def __init__(self):
+                created.append(self)
+
+            def get_token(self, *scopes, **kwargs):
+                assert scopes == ("https://management.azure.com/.default",)
+                return SimpleNamespace(token="managed-identity-token")
+
+        identity = ModuleType("azure.identity")
+        identity.DefaultAzureCredential = DefaultAzureCredential
+        package = ModuleType("azure")
+        package.identity = identity
+        requests_by_script = {
+            REPORT: {"subscription_id": SUB, "start_date": "2026-10-01", "end_date": "2026-10-01"},
+            READ: {"subscription_id": SUB, "operation_url": OPERATION},
+            QUERY: {"subscription_id": SUB, "start_date": "2026-10-01", "end_date": "2026-10-31"},
+            COMMITMENTS: {},
+        }
+        denied = FakeResponse(403, {"error": {"code": "AuthorizationFailed", "message": "denied"}})
+        for script, parameters in requests_by_script.items():
+            azure = FakeAzure(("POST", ARM, denied), ("GET", ARM, denied))
+            with self.subTest(script=script.name), tempfile.TemporaryDirectory() as directory, azure.active(), \
+                    patch.dict(sys.modules, {"azure": package, "azure.identity": identity}):
+                output = Path(directory) / "result.json"
+                run = run_cli(script, parameters, args=["--input", "{input}", "--output", str(output)])
+                self.assertEqual(run.code, 0, run.err)
+                self.assertNotIn("auth_required", json.loads(output.read_text(encoding="utf-8")))
+                self.assertTrue(azure.calls)
+                for call in azure.calls:
+                    self.assertEqual(call.headers["Authorization"], "Bearer managed-identity-token")
+        self.assertEqual(len(created), len(requests_by_script), "one lazily created credential per run")
 
     def test_cli_forwards_json_and_preserves_results(self):
         for script, parameters in zip(SCRIPTS, INPUTS):
