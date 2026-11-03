@@ -65,7 +65,7 @@ When the user supplies a narrower scope, add subscription or resource-group filt
 
 ## Billed cost
 
-Billed cost comes from the Cost Details tools. When they are throttled (HTTP 429) or not supported for the subscription, `AzureCostDetails-Query` is the only permitted second source: it calls the same Cost Management Query API as the PowerShell script, through a Python tool. The read-only CLI channel rejects Cost Management Query API POST requests, so do not retry them through the CLI, do not route them through a write tool, and do not replace them with an estimate.
+Billed cost comes from the Python operations bundled in `azure-cost-details`; load that skill for installed file resolution and JSON execution, without creating custom tools. When they are throttled (HTTP 429) or not supported for the subscription, `AzureCostDetails-Query` is the only permitted second source: it calls the same Cost Management Query API as the PowerShell script, through its bundled Python script. The read-only CLI channel rejects Cost Management Query API POST requests, so do not retry them through the CLI, do not route them through a write tool, and do not replace them with an estimate.
 
 | What the PowerShell script reads | Cost Details equivalent | Query equivalent (`AzureCostDetails-Query`) |
 |---|---|---|

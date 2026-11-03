@@ -1,0 +1,4 @@
+# requests is required; the Azure SRE Agent sandbox preinstalls it.
+requests>=2.32,<3
+# azure-identity is needed only when a script runs without --token-file.
+azure-identity>=1.17,<2

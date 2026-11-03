@@ -1,8 +1,29 @@
-# Azure SRE Agent Canvas tool name: AzureCostDetails-Read
-# Identity tab: enable ARM. Set the tool timeout to 900 seconds.
-from azure.identity import DefaultAzureCredential
+# Bundled skill script: the skill runs it in the agent sandbox with --input, --output and
+# --token-file (see SKILL.md). main() still works unchanged as an Agent Canvas Python tool.
+credential = None  # Set by --token-file; otherwise DefaultAzureCredential on first use.
 
-credential = DefaultAzureCredential()
+
+class _AuthUnavailable(Exception):
+    pass
+
+
+class _FileToken:
+    def __init__(self, token):
+        self.token = token
+
+    def get_token(self, *scopes, **kwargs):
+        return self
+
+
+def _arm_token():
+    global credential
+    try:
+        if credential is None:
+            from azure.identity import DefaultAzureCredential
+            credential = DefaultAzureCredential()
+        return credential.get_token("https://management.azure.com/.default").token
+    except Exception as exc:
+        raise _AuthUnavailable(type(exc).__name__) from None
 
 
 def main(
@@ -23,7 +44,7 @@ def main(
     in an explicit unattributed bucket. rows: original CSV records, optionally
     select column names separated by commas. Exact ResourceId filter optional.
     Follow next_offset until has_more is false. Each call reads the full report
-    again because Agent Canvas containers have no persistent state.
+    again without relying on state from a previous process.
     Totals cover ALL matching records, not only the returned page. Do not add
     totals from different pages of the same report. Monetary values are strings
     calculated with Decimal. Blob SAS URLs and ARM tokens are never returned.
@@ -54,12 +75,20 @@ def main(
     class LimitReached(Exception):
         pass
 
+    class OutOfTime(LimitReached):
+        pass
+
     def normalize(value):
         return re.sub(r"[\s_-]+", "", value).lower()
 
     def check_time():
         if time.monotonic() > deadline:
-            raise LimitReached("Tempo disponibile esaurito; richiedere un report su un periodo più breve")
+            raise OutOfTime("Tempo disponibile esaurito; richiedere un report su un periodo più breve")
+
+    def fresh_run(message):
+        # The next call starts without waiting, so the download gets the whole time budget.
+        return {"status": "retry", "data_complete": False, "subscription_id": sid, "operation_url": operation_url,
+                "not_before_unix": 0, "retry_after_seconds": 0, "message": message}
 
     def retry_seconds(headers):
         delays = []
@@ -99,6 +128,7 @@ def main(
         def finalize(self):
             return json.dumps(sorted(self.values))
 
+    sid, waited = "", 0
     try:
         sid = str(UUID(re.sub(r"^/subscriptions/", "", subscription_id.strip(), flags=re.I).strip("/")))
         parsed = urlparse(operation_url)
@@ -109,28 +139,35 @@ def main(
         if view not in ("resources", "rows") or int(offset) < 0 or not 1 <= int(page_size) <= 200:
             raise ValueError("Usare view resources/rows, offset >= 0 e page_size tra 1 e 200")
         offset, page_size = int(offset), int(page_size)
-        deadline = time.monotonic() + max(5, min(int(max_seconds), 840))
+        budget = max(5, min(int(max_seconds), 840))
+        deadline = time.monotonic() + budget
         byte_limit = max(1, min(int(max_download_mb), 2048)) * 1024 * 1024
         output_limit = 60_000  # Bound the page sent to the LLM, not the input CSV.
         selected = [x.strip() for x in columns.split(",") if x.strip()]
         resource_filter = resource_id.strip().rstrip("/").lower()
+        waited = max(0, int(not_before_unix) - time.time())
         while time.time() < int(not_before_unix):
             remaining = deadline - time.monotonic() - 5
             if remaining <= 0:
-                return {"status": "retry", "data_complete": False,
-                        "not_before_unix": int(not_before_unix),
+                return {"status": "retry", "data_complete": False, "subscription_id": sid,
+                        "operation_url": operation_url, "not_before_unix": int(not_before_unix),
                         "retry_after_seconds": max(1, int(not_before_unix - time.time())),
                         "message": "Ripetere la stessa chiamata per continuare l'attesa"}
             time.sleep(min(60, remaining, not_before_unix - time.time()))
-        token = credential.get_token("https://management.azure.com/.default").token
+        if waited > budget / 4:
+            return fresh_run("Attesa terminata: ripetere subito la stessa chiamata con not_before_unix=0")
+        token = _arm_token()
         with requests.get(operation_url, headers={"Authorization": "Bearer " + token, "ClientType": client_type},
                           timeout=(10, 30), allow_redirects=False) as response:
             if response.status_code in (202, 429, 500, 502, 503, 504):
                 delay = retry_seconds(response.headers)
-                return {"status": "pending" if response.status_code == 202 else "retry",
+                return {"status": "pending" if response.status_code == 202 else "retry", "subscription_id": sid,
                         "operation_url": operation_url, "http_status": response.status_code,
                         "retry_after_seconds": delay, "not_before_unix": int(time.time()) + delay + 1,
                         "rate_limit": rate_limit(response.headers), "data_complete": False}
+            if response.status_code == 401:
+                return {"status": "error", "http_status": 401, "data_complete": False, "auth_required": True,
+                        "message": "Token ARM mancante, scaduto o non valido; ripetere con un nuovo token"}
             if response.status_code != 200:
                 return {"status": "error", "http_status": response.status_code, "data_complete": False,
                         "message": "Impossibile leggere il report ARM; verificare permessi o scadenza"}
@@ -186,7 +223,8 @@ def main(
                 with requests.get(blob_url, stream=True, timeout=(10, 30), allow_redirects=False) as download:
                     if download.status_code in (429, 500, 502, 503, 504):
                         delay = retry_seconds(download.headers)
-                        return {"status": "retry", "data_complete": False, "operation_url": operation_url,
+                        return {"status": "retry", "data_complete": False, "subscription_id": sid,
+                                "operation_url": operation_url,
                                 "retry_after_seconds": delay, "not_before_unix": int(time.time()) + delay + 1,
                                 "message": "Download temporaneamente non disponibile; ripetere la stessa lettura"}
                     if download.status_code != 200:
@@ -311,12 +349,21 @@ def main(
                       "Ogni pagina rilegge il report: per grandi volumi usare intervalli giornalieri e filtri mirati.",
                       "I dati recenti possono essere incompleti; assenza di righe non significa costo zero."],
         }
+    except OutOfTime as exc:
+        if waited:
+            return fresh_run("Tempo esaurito dopo l'attesa: ripetere subito la stessa chiamata con not_before_unix=0")
+        return {"status": "split_required", "data_complete": False, "message": str(exc)}
     except LimitReached as exc:
         return {"status": "split_required", "data_complete": False, "message": str(exc)}
+    except _AuthUnavailable as exc:
+        return {"status": "error", "data_complete": False, "auth_required": True, "error_type": str(exc),
+                "message": "Nessuna credenziale Azure disponibile: passare un token ARM con --token-file"}
     except requests.RequestException:
         return {"status": "error", "data_complete": False,
                 "message": "Download interrotto o errore di rete; nessun totale parziale restituito"}
     except sqlite3.OperationalError as exc:
+        if "interrupted" in str(exc) and waited:
+            return fresh_run("Tempo esaurito dopo l'attesa: ripetere subito la stessa chiamata con not_before_unix=0")
         return {"status": "split_required" if "interrupted" in str(exc) else "error",
                 "data_complete": False, "message": "Limite di tempo o spazio locale; richiedere intervalli più brevi"}
     except (ValueError, KeyError, TypeError, csv.Error, UnicodeError, EOFError, OSError) as exc:
@@ -324,4 +371,58 @@ def main(
                 "message": re.sub(r"https?://\S+", "[URL omesso]", str(exc))[:1000]}
     except Exception as exc:
         return {"status": "error", "data_complete": False, "error_type": type(exc).__name__,
-                "message": "Verificare Identity ARM, schema CSV e dipendenze Python"}
+                "message": "Verificare credenziali Azure, schema CSV e dipendenze Python"}
+
+
+if __name__ == "__main__":
+    import argparse
+    import inspect
+    import json
+    import os
+    import re
+    import sys
+
+    parser = argparse.ArgumentParser(description=main.__doc__)
+    parser.add_argument("--input", type=argparse.FileType("r", encoding="utf-8"),
+                        default=sys.stdin, help="JSON parameters file; defaults to stdin")
+    parser.add_argument("--output", help="write the full JSON result to this file and print only a short summary")
+    parser.add_argument("--token-file", help="file that contains only an ARM access token; without it the "
+                                             "script uses DefaultAzureCredential")
+    args = parser.parse_args()
+    with args.input as stream:
+        try:
+            parameters = json.load(stream)
+        except (ValueError, OSError):
+            parser.error("Input must contain valid JSON")
+    if not isinstance(parameters, dict):
+        parser.error("Input must be a JSON object")
+    try:
+        inspect.signature(main).bind(**parameters)
+    except TypeError:
+        parser.error("Input parameters do not match main(); see the skill input contract")
+    for budget in ("max_wait_seconds", "max_seconds"):
+        # Terminal commands stop after 120 seconds by default: keep each run well within that.
+        if budget in inspect.signature(main).parameters:
+            parameters.setdefault(budget, 80)
+    if args.token_file:
+        try:
+            with open(args.token_file, "rb") as stream:
+                raw = stream.read()
+            # Accept the UTF-8 BOM and UTF-16 files that PowerShell redirection can write.
+            text = raw.decode("utf-16" if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig")
+            token = re.sub(r"(?i)^bearer\s+", "", text.strip().strip("\"'").strip())
+        except (OSError, UnicodeError):
+            parser.error("--token-file cannot be read")
+        if not re.fullmatch(r"[\w-]+(\.[\w-]+){2,4}", token, re.ASCII):
+            parser.error("--token-file must contain only an ARM access token")
+        credential = _FileToken(token)
+    result = main(**parameters)
+    if args.output:
+        os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
+        with open(args.output + ".tmp", "w", encoding="utf-8") as stream:
+            json.dump(result, stream, ensure_ascii=False)
+        os.replace(args.output + ".tmp", args.output)
+        # The terminal shows little output: keep records, internal URLs and resume state in the file.
+        hidden = {"operation_url", "resume_state", "records", "request", "available_columns", "notes", "limitations"}
+        result = {**{k: v for k, v in result.items() if k not in hidden}, "output": args.output}
+    print(json.dumps(result, ensure_ascii=False))

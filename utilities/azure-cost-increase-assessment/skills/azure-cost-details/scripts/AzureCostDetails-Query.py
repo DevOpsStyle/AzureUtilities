@@ -1,8 +1,29 @@
-# Azure SRE Agent Canvas tool name: AzureCostDetails-Query
-# Identity tab: enable ARM. Set the tool timeout to 300 seconds.
-from azure.identity import DefaultAzureCredential
+# Bundled skill script: the skill runs it in the agent sandbox with --input, --output and
+# --token-file (see SKILL.md). main() still works unchanged as an Agent Canvas Python tool.
+credential = None  # Set by --token-file; otherwise DefaultAzureCredential on first use.
 
-credential = DefaultAzureCredential()
+
+class _AuthUnavailable(Exception):
+    pass
+
+
+class _FileToken:
+    def __init__(self, token):
+        self.token = token
+
+    def get_token(self, *scopes, **kwargs):
+        return self
+
+
+def _arm_token():
+    global credential
+    try:
+        if credential is None:
+            from azure.identity import DefaultAzureCredential
+            credential = DefaultAzureCredential()
+        return credential.get_token("https://management.azure.com/.default").token
+    except Exception as exc:
+        raise _AuthUnavailable(type(exc).__name__) from None
 
 
 def main(
@@ -27,8 +48,9 @@ def main(
     meter subcategory and pricing model; pass resource_id to analyze one resource).
     meter_categories: comma-separated MeterCategory filter, for example
     "Virtual Machines,Storage". No raw rows, quantities, prices, tags, or reservation IDs.
-    A wait up to 30 seconds is retried here; a longer wait is returned as retry.
-    Read only; JSON only.
+    max_wait_seconds (30 to 240) bounds the whole call: a wait up to 30 seconds is retried
+    here, a longer one is returned as retry, and a query that cannot finish in time returns
+    split_required. Read only; JSON only.
     """
     import re
     import time
@@ -80,9 +102,20 @@ def main(
         attempt = 0
         while True:
             attempt += 1
-            token = credential.get_token(arm + "/.default").token
-            with requests.post(url, json=body, headers={"Authorization": "Bearer " + token, "ClientType": client_type},
-                               timeout=(10, 60), allow_redirects=False) as response:
+            # Every request must end before the deadline: a run that the terminal stops returns nothing.
+            remaining = deadline - time.monotonic()
+            if remaining < 15:
+                return {"status": "split_required", "message": "The query did not finish within max_wait_seconds: "
+                        "narrow the period or the filters, request one metric, or allow more time"}
+            token = _arm_token()
+            try:
+                response = requests.post(url, json=body, headers={"Authorization": "Bearer " + token,
+                                                                  "ClientType": client_type},
+                                         timeout=(10, min(60, remaining - 10)), allow_redirects=False)
+            except requests.Timeout:
+                return {"status": "split_required", "message": "Azure did not answer within max_wait_seconds: "
+                        "narrow the period or the filters, request one metric, or allow more time"}
+            with response:
                 code = response.status_code
                 if code == 204:
                     return {"status": "ok", "body": {}}
@@ -93,16 +126,20 @@ def main(
                         return {"status": "error", "message": "Azure returned a response that is not JSON"}
                 if code in (429, 500, 502, 503, 504):
                     delay = retry_seconds(response.headers)
-                    if delay <= 30 and attempt < 3 and time.monotonic() + delay + 5 < deadline:
+                    if delay <= 30 and attempt < 3 and time.monotonic() + delay + 20 < deadline:
                         time.sleep(delay)
                         continue
                     return {"status": "retry", "http_status": code, "retry_after_seconds": delay,
                             "rate_limit": rate_limit(response.headers),
                             "message": f"HTTP {code}; wait before repeating the call"}
-                if code in (401, 403):
+                if code == 401:
+                    return {"status": "error", "http_status": code, "auth_required": True,
+                            "message": "Authentication failed: the ARM access token is missing, expired, or not "
+                                       "valid. Repeat the call with a new token."}
+                if code == 403:
                     return {"status": "forbidden", "http_status": code,
                             "message": "The identity cannot read the costs of this subscription. Assign Cost Management "
-                                       "Reader on the subscription and check that ARM is enabled in the Identity tab."}
+                                       "Reader on the subscription."}
                 try:
                     error = response.json().get("error", {})
                 except ValueError:
@@ -144,7 +181,7 @@ def main(
         return {"status": "ok", "rows": rows, "row_count": len(rows)}
 
     try:
-        deadline = time.monotonic() + max(10, min(int(max_wait_seconds), 240))
+        deadline = time.monotonic() + max(30, min(int(max_wait_seconds), 240))
         sid = str(UUID(re.sub(r"^/subscriptions/", "", subscription_id.strip(), flags=re.I).strip("/")))
         start = datetime.strptime(start_date.strip(), "%Y-%m-%d").date()
         stop = datetime.strptime(end_date.strip(), "%Y-%m-%d").date()
@@ -169,16 +206,22 @@ def main(
         results = {}
         for metric_type in wanted:
             results[metric_type] = run(metric_type)
-            if results[metric_type]["status"] in ("retry", "forbidden"):
+            if (results[metric_type]["status"] in ("retry", "forbidden", "split_required")
+                    or results[metric_type].get("auth_required")):
                 break
         for metric_type in wanted:
             results.setdefault(metric_type, {"status": "skipped", "message": "Not requested after the previous failure"})
         sources = {m: {k: v for k, v in r.items() if k != "rows"} for m, r in results.items()}
         failed = [m for m, r in results.items() if r["status"] != "ok"]
+        timed_out = [m for m in failed if results[m]["status"] == "split_required"]
+        if timed_out:
+            # One metric or a shorter period per call can fit where this call did not: never report it as partial.
+            return {"status": "split_required", "data_complete": False, "source": "cost_management_query",
+                    "sources": sources, "message": results[timed_out[0]]["message"]}
         if len(failed) == len(wanted):
             first = next((m for m in failed if results[m]["status"] != "skipped"), failed[0])
-            top = {k: results[first][k] for k in ("http_status", "azure_code", "retry_after_seconds", "rate_limit")
-                   if k in results[first]}
+            top = {k: results[first][k] for k in ("http_status", "azure_code", "retry_after_seconds", "rate_limit",
+                                                  "auth_required") if k in results[first]}
             return {"status": results[first]["status"], "data_complete": False, "source": "cost_management_query",
                     "sources": sources, "message": results[first].get("message"), **top}
 
@@ -264,9 +307,14 @@ def main(
             "totals_by_currency": {fields[m]: {c: format(v, "f") for c, v in sorted(totals[fields[m]].items())}
                                    for m in wanted if results[m]["status"] == "ok"},
             "records": page, "limitations": limitations,
+            **({"auth_required": True} if any(results[m].get("auth_required") for m in failed) else {}),
             **({"message": "Cost Management returned no data for this period and filters. This does not prove that the "
                            "cost is zero: recent days can still be missing."} if empty else {}),
         }
+    except _AuthUnavailable as exc:
+        return {"status": "error", "data_complete": False, "source": "cost_management_query", "auth_required": True,
+                "error_type": str(exc), "message": "No Azure credential in this runtime: pass an ARM access token "
+                                                   "with --token-file"}
     except (ValueError, TypeError, KeyError) as exc:
         return {"status": "error", "data_complete": False, "source": "cost_management_query",
                 "message": re.sub(r"https?://\S+", "[URL omitted]", str(exc))[:500]}
@@ -275,4 +323,58 @@ def main(
                 "message": "Network error while calling Azure Resource Manager"}
     except Exception as exc:
         return {"status": "error", "data_complete": False, "source": "cost_management_query",
-                "error_type": type(exc).__name__, "message": "Check that ARM is enabled in the Identity tab of the tool"}
+                "error_type": type(exc).__name__, "message": "Check Azure credentials and Cost Management permissions"}
+
+
+if __name__ == "__main__":
+    import argparse
+    import inspect
+    import json
+    import os
+    import re
+    import sys
+
+    parser = argparse.ArgumentParser(description=main.__doc__)
+    parser.add_argument("--input", type=argparse.FileType("r", encoding="utf-8"),
+                        default=sys.stdin, help="JSON parameters file; defaults to stdin")
+    parser.add_argument("--output", help="write the full JSON result to this file and print only a short summary")
+    parser.add_argument("--token-file", help="file that contains only an ARM access token; without it the "
+                                             "script uses DefaultAzureCredential")
+    args = parser.parse_args()
+    with args.input as stream:
+        try:
+            parameters = json.load(stream)
+        except (ValueError, OSError):
+            parser.error("Input must contain valid JSON")
+    if not isinstance(parameters, dict):
+        parser.error("Input must be a JSON object")
+    try:
+        inspect.signature(main).bind(**parameters)
+    except TypeError:
+        parser.error("Input parameters do not match main(); see the skill input contract")
+    for budget in ("max_wait_seconds", "max_seconds"):
+        # Terminal commands stop after 120 seconds by default: keep each run well within that.
+        if budget in inspect.signature(main).parameters:
+            parameters.setdefault(budget, 80)
+    if args.token_file:
+        try:
+            with open(args.token_file, "rb") as stream:
+                raw = stream.read()
+            # Accept the UTF-8 BOM and UTF-16 files that PowerShell redirection can write.
+            text = raw.decode("utf-16" if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig")
+            token = re.sub(r"(?i)^bearer\s+", "", text.strip().strip("\"'").strip())
+        except (OSError, UnicodeError):
+            parser.error("--token-file cannot be read")
+        if not re.fullmatch(r"[\w-]+(\.[\w-]+){2,4}", token, re.ASCII):
+            parser.error("--token-file must contain only an ARM access token")
+        credential = _FileToken(token)
+    result = main(**parameters)
+    if args.output:
+        os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
+        with open(args.output + ".tmp", "w", encoding="utf-8") as stream:
+            json.dump(result, stream, ensure_ascii=False)
+        os.replace(args.output + ".tmp", args.output)
+        # The terminal shows little output: keep records, internal URLs and resume state in the file.
+        hidden = {"operation_url", "resume_state", "records", "request", "available_columns", "notes", "limitations"}
+        result = {**{k: v for k, v in result.items() if k not in hidden}, "output": args.output}
+    print(json.dumps(result, ensure_ascii=False))

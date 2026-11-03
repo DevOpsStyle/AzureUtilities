@@ -1,0 +1,12 @@
+# Python caches: never let them reach a skill folder, which the plugin installs as a whole.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local test credentials and script outputs.
+arm-token
+*.out.json
+
+# Editors and operating systems.
+.DS_Store
+Thumbs.db

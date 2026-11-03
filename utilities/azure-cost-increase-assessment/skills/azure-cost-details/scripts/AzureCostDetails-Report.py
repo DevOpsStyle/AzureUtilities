@@ -1,8 +1,29 @@
-# Azure SRE Agent Canvas tool name: AzureCostDetails-Report
-# Identity tab: enable ARM. Set the tool timeout to 900 seconds.
-from azure.identity import DefaultAzureCredential
+# Bundled skill script: the skill runs it in the agent sandbox with --input, --output and
+# --token-file (see SKILL.md). main() still works unchanged as an Agent Canvas Python tool.
+credential = None  # Set by --token-file; otherwise DefaultAzureCredential on first use.
 
-credential = DefaultAzureCredential()
+
+class _AuthUnavailable(Exception):
+    pass
+
+
+class _FileToken:
+    def __init__(self, token):
+        self.token = token
+
+    def get_token(self, *scopes, **kwargs):
+        return self
+
+
+def _arm_token():
+    global credential
+    try:
+        if credential is None:
+            from azure.identity import DefaultAzureCredential
+            credential = DefaultAzureCredential()
+        return credential.get_token("https://management.azure.com/.default").token
+    except Exception as exc:
+        raise _AuthUnavailable(type(exc).__name__) from None
 
 
 def main(
@@ -122,8 +143,7 @@ def main(
             kwargs = {} if method == "GET" else {"json": {
                 "metric": metric, "timePeriod": {"start": state["start"], "end": state["end"]}
             }}
-            # Obtain/refresh the token inside main; do not read a different env variable.
-            token = credential.get_token(arm + "/.default").token
+            token = _arm_token()
             with requests.request(method, checked_url(url), headers={
                 "Authorization": "Bearer " + token, "Content-Type": "application/json", "ClientType": client_type
             }, timeout=(10, 30), allow_redirects=False, **kwargs) as response:
@@ -142,8 +162,13 @@ def main(
                     except ValueError:
                         err = {}
                     detail = re.sub(r"https?://\S+", "[URL omesso]", str(err.get("message", "")))[:1000]
-                    return {"status": "error", "http_status": code, "azure_code": err.get("code"),
-                            "message": detail or "Richiesta Cost Details non riuscita", "operation_url": state["url"]}
+                    failure = {"status": "error", "http_status": code, "azure_code": err.get("code"),
+                               "message": detail or "Richiesta Cost Details non riuscita", "operation_url": state["url"]}
+                    if code == 401:
+                        # Expired or invalid token: resume the same report with a new token.
+                        failure.update(auth_required=True, resume_state=json.dumps(
+                            state, separators=(",", ":")) if state["url"] else "")
+                    return failure
                 try:
                     body = response.json()
                 except ValueError:
@@ -175,6 +200,10 @@ def main(
                 state["not_before"] = time.time() + retry_seconds(headers)
                 if time.monotonic() >= deadline:
                     return paused("pending", "Report in preparazione; riprendere lo stesso report")
+    except _AuthUnavailable as exc:
+        return {"status": "error", "auth_required": True, "error_type": str(exc),
+                "message": "Nessuna credenziale Azure disponibile: passare un token ARM con --token-file",
+                "resume_state": json.dumps(state, separators=(",", ":")) if state.get("url") else ""}
     except requests.RequestException:
         return {"status": "error", "message": "Errore di rete ARM; nessuna risposta conclusiva",
                 "operation_url": state.get("url", ""),
@@ -183,5 +212,59 @@ def main(
     except (ValueError, TypeError, KeyError) as exc:
         return {"status": "error", "message": re.sub(r"https?://\S+", "[URL omesso]", str(exc))[:1000]}
     except Exception as exc:
-        return {"status": "error", "message": "Verificare Identity ARM e permessi Cost Management",
+        return {"status": "error", "message": "Verificare credenziali Azure e permessi Cost Management",
                 "error_type": type(exc).__name__}
+
+
+if __name__ == "__main__":
+    import argparse
+    import inspect
+    import json
+    import os
+    import re
+    import sys
+
+    parser = argparse.ArgumentParser(description=main.__doc__)
+    parser.add_argument("--input", type=argparse.FileType("r", encoding="utf-8"),
+                        default=sys.stdin, help="JSON parameters file; defaults to stdin")
+    parser.add_argument("--output", help="write the full JSON result to this file and print only a short summary")
+    parser.add_argument("--token-file", help="file that contains only an ARM access token; without it the "
+                                             "script uses DefaultAzureCredential")
+    args = parser.parse_args()
+    with args.input as stream:
+        try:
+            parameters = json.load(stream)
+        except (ValueError, OSError):
+            parser.error("Input must contain valid JSON")
+    if not isinstance(parameters, dict):
+        parser.error("Input must be a JSON object")
+    try:
+        inspect.signature(main).bind(**parameters)
+    except TypeError:
+        parser.error("Input parameters do not match main(); see the skill input contract")
+    for budget in ("max_wait_seconds", "max_seconds"):
+        # Terminal commands stop after 120 seconds by default: keep each run well within that.
+        if budget in inspect.signature(main).parameters:
+            parameters.setdefault(budget, 80)
+    if args.token_file:
+        try:
+            with open(args.token_file, "rb") as stream:
+                raw = stream.read()
+            # Accept the UTF-8 BOM and UTF-16 files that PowerShell redirection can write.
+            text = raw.decode("utf-16" if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig")
+            token = re.sub(r"(?i)^bearer\s+", "", text.strip().strip("\"'").strip())
+        except (OSError, UnicodeError):
+            parser.error("--token-file cannot be read")
+        if not re.fullmatch(r"[\w-]+(\.[\w-]+){2,4}", token, re.ASCII):
+            parser.error("--token-file must contain only an ARM access token")
+        credential = _FileToken(token)
+    result = main(**parameters)
+    if args.output:
+        os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
+        with open(args.output + ".tmp", "w", encoding="utf-8") as stream:
+            json.dump(result, stream, ensure_ascii=False)
+        os.replace(args.output + ".tmp", args.output)
+        # The terminal shows little output: keep records, internal URLs and resume state in the file.
+        hidden = {"operation_url", "resume_state", "records", "request", "available_columns", "notes", "limitations"}
+        result = {**{k: v for k, v in result.items() if k not in hidden}, "output": args.output}
+    print(json.dumps(result, ensure_ascii=False))

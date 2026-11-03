@@ -1,20 +1,21 @@
 # Azure Commitments per Azure SRE Agent
 
-`AzureCommitments-List.py` è un tool Python indipendente da incollare in Agent Canvas, come gli altri. Espone `main(...) -> dict` e restituisce JSON. Elenca le **reservation** e i **savings plan** attivi che l'identità gestita può leggere, così l'agente può rispondere con dati precisi: scope, durata, scadenza, rinnovo, impegno orario dei savings plan e utilizzo.
+`AzureCommitments-List.py` viene installato da GitHub con il plugin, nella cartella `scripts/` della skill: non va caricato, ricreato o collegato in Agent Canvas. L'agente lo esegue nel terminale del sandbox con `--input <file JSON UTF-8>` (oppure JSON da stdin), `--output <file>` e `--token-file <file>`; resta compatibile con `main(...) -> dict` dei Python tool esistenti, che però non servono più. Elenca le **reservation** e i **savings plan** attivi che l'identità gestita può leggere, così l'agente può rispondere con dati precisi: scope, durata, scadenza, rinnovo, impegno orario dei savings plan e utilizzo.
 
 La panoramica e il deep dive del plugin lo usano per dire quali impegni esistono, quando scadono, se sono ancora attivi alla data dell'aumento e quanto sono utilizzati.
 
-## Inserimento in Agent Canvas
+## Esecuzione dello script incluso
 
-> **Nome del tool.** Azure SRE Agent non accetta l'underscore nei nomi dei tool: usa esattamente `AzureCommitments-List`, con il trattino.
+L'agente segue la procedura "Running the bundled script" di [SKILL.md](../SKILL.md), dalla radice del workspace del sandbox:
 
-1. Crea un Python tool chiamato esattamente `AzureCommitments-List` e incolla tutto il contenuto di [`AzureCommitments-List.py`](../scripts/AzureCommitments-List.py) nel tab Code.
-2. Nel tab Identity abilita **Azure Resource Manager / ARM**. Il timeout predefinito di 120 secondi è sufficiente.
-3. Incolla nel campo Description il testo qui sotto.
-4. Assegna i due ruoli del paragrafo successivo all'identità del tool.
-5. Installa o aggiorna il plugin e verifica che le skill `azure-commitments` e `azure-cost-advisor` abbiano il tool associato. Se non risulta collegato, aggiungilo con **Choose tools**.
+1. Usa la copia installata in `runtime-content/skills/plugins/<installation>/live/azure-commitments/scripts/`. Solo se manca, la legge con `read_skill_file` e la crea con `CreateFile` in `tmp/azure-commitments/scripts/`, senza interventi del cliente.
+2. Riusa il token ARM di `tmp/azure-cost/arm-token`, condiviso con `azure-cost-details`. Se manca, lo ottiene con lo strumento di sola lettura `RunAzCliReadCommands` (`az account get-access-token --resource https://management.azure.com --subscription <subscription-id> --query accessToken -o tsv`) e lo salva solo in quel file, senza mostrarlo. Senza `--token-file` lo script usa `DefaultAzureCredential`.
+3. Salva i parametri JSON in `tmp/azure-cost/` ed esegue, con `RunInTerminal`, `python3 "<SKILL_DIR>/scripts/AzureCommitments-List.py" --token-file tmp/azure-cost/arm-token --input tmp/azure-cost/commitments-1.json --output tmp/azure-cost/commitments-1.out.json`.
+4. Analizza nel sandbox il file di output (il terminale mostra solo un riepilogo) e riusa il risultato nella conversazione. Con `auth_required: true` prende un nuovo token e ripete una volta; `forbidden` indica invece un ruolo mancante.
 
-Descrizione del tool:
+Il plugin non assegna ruoli: assegna all'identità gestita dell'agente i due ruoli del paragrafo successivo. Per aggiornare il codice aggiorna il plugin; non serve ricreare o collegare tool.
+
+Riepilogo del contratto, utile solo se si vuole ancora usare lo script come Python tool di Agent Canvas:
 
 ```text
 Elenca le reservation e i savings plan Azure attivi che l'identità gestita può leggere. Sono risorse a livello tenant: servono Reservations Reader su /providers/Microsoft.Capacity e Savings plan reader su /providers/Microsoft.BillingBenefits. Sola lettura. Parametri: kind (all, reservations, savings_plans); subscription_id, per indicare se ciascun impegno può applicarsi a quella subscription; effective_date (YYYY-MM-DD), per sapere se è ancora attivo in quella data; filtri reserved_resource_type, location e sku (riguardano solo le reservation: i savings plan non sono legati a tipo, area o taglia e restano nel risultato) e commitment_id; include_inactive; offset e page_size. Restituisce nome, stato, tipo e SKU, area, quantità, durata, scadenza e giorni residui, rinnovo, scope, impegno orario del savings plan e utilizzo a 1, 7 e 30 giorni. Una lista vuota non prova che non esistano impegni: può mancare il permesso. Non elenca le risorse coperte. Risultato completo solo con status=ok e data_complete=true.
@@ -39,7 +40,7 @@ New-AzRoleAssignment -Scope "/providers/Microsoft.BillingBenefits" -PrincipalId 
 
 Le assegnazioni fatte con PowerShell non compaiono nel portale: per vederle usa `Get-AzRoleAssignment`. Possono servire alcuni minuti per propagarsi. Un amministratore di fatturazione EA/MCA può invece vedere i propri impegni dal portale con i ruoli di fatturazione, ma quei ruoli non danno accesso all'identità dell'agente.
 
-## Prova nel Test playground
+## Parametri JSON di prova
 
 Tutti gli impegni attivi, con la data dell'aumento:
 
@@ -66,6 +67,15 @@ Solo le reservation di VM in una regione:
 { "kind": "reservations", "reserved_resource_type": "VirtualMachines", "location": "northeurope" }
 ```
 
+Per una prova fuori dall'agente, con un accesso Azure CLI che abbia i due ruoli, salva i parametri in `commitments.json` ed esegui dalla cartella della skill:
+
+```bash
+az account get-access-token --resource https://management.azure.com --query accessToken -o tsv > arm-token
+python3 scripts/AzureCommitments-List.py --token-file arm-token --input commitments.json --output commitments.out.json
+```
+
+Cancella `arm-token` al termine.
+
 ## Come funziona e cosa non fa
 
 - Chiama `GET /providers/Microsoft.Capacity/reservations` e `GET /providers/Microsoft.BillingBenefits/savingsPlans`, entrambe con `api-version=2022-11-01`, seguendo `nextLink` (fino a 10 pagine). Sono verificate su ARM reale. La versione `2026-06-01` che compare nella pagina di documentazione dei savings plan **non è ancora disponibile** in ARM: la chiamata risponde 404 `InvalidResourceType` e indica `2022-11-01` tra le versioni supportate.
@@ -80,7 +90,7 @@ Solo le reservation di VM in una regione:
 
 ## Verifica
 
-Il tool è stato provato su ARM reale, in sola lettura, nella subscription di test: le tre chiamate rispondono 200 con lista vuota (nessun impegno visibile), e `status`, `sources`, note e `data_complete` risultano corretti. I campi di un elenco popolato sono verificati con risposte simulate costruite sulla forma documentata: paginazione con `nextLink`, scadenze rispetto alla data di efficacia, scope (nella forma `appliedScopeProperties` degli esempi di risposta 2022-11-01 e in quella ad array), filtri, permessi mancanti (403), limiti di frequenza (429, 503), `nextLink` non valido e paginazione senza fine. Per un elenco popolato nel tuo tenant, esegui la prova nel playground dopo aver assegnato i ruoli.
+Il tool è stato provato su ARM reale, in sola lettura, nella subscription di test: le tre chiamate rispondono 200 con lista vuota (nessun impegno visibile), e `status`, `sources`, note e `data_complete` risultano corretti. I campi di un elenco popolato sono verificati con risposte simulate costruite sulla forma documentata: paginazione con `nextLink`, scadenze rispetto alla data di efficacia, scope (nella forma `appliedScopeProperties` degli esempi di risposta 2022-11-01 e in quella ad array), filtri, permessi mancanti (403), token scaduto (401, con `auth_required`), limiti di frequenza (429, 503), `nextLink` non valido e paginazione senza fine. Per un elenco popolato nel tuo tenant, chiedi all'agente quali impegni sono attivi dopo aver assegnato i ruoli, oppure esegui la prova da riga di comando descritta sopra.
 
 Riferimenti Microsoft:
 

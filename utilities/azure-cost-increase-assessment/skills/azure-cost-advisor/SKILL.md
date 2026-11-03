@@ -1,11 +1,6 @@
 ---
 name: azure-cost-advisor
 description: Guide Azure cost conversations and announced Azure price increases with a short overview first, then a deep dive on the resource the customer picks. Use for general Azure costs or spend, what VMs, disks and storage will cost after a price increase or announcement (for example the 1 February 2027 changes), which resources are affected, and whether a specific resource is in an affected region or series or covered by the active reservations or savings plans.
-tools:
-  - AzureCostDetails-Report
-  - AzureCostDetails-Read
-  - AzureCostDetails-Query
-  - AzureCommitments-List
 ---
 
 # Azure Cost Advisor
@@ -24,6 +19,8 @@ Read-only, conversational advisor for Azure costs and announced price changes. I
 | Price-change rules | [price-change-profiles](./references/price-change-profiles.md) |
 
 Activate these skills when this one points to them: `azure-cost-details` for the cost tools and the choice between Cost Details and Query, `azure-commitments` for the reservations and savings plans, and `azure-cost-increase-assessment` for the canonical rules, the retail fallback rules, and the CSV format.
+
+The four operation names are Python scripts bundled in `azure-cost-details` and `azure-commitments`, not registered tools. Load the owning skill and follow its "Running the bundled scripts" procedure before the first call: resolve the installed script, authenticate with the ARM token file `tmp/azure-cost/arm-token` that both skills share, and run it with `RunInTerminal`. Use the built-in Azure CLI read tool for inventory. No customer upload, tool creation, or Code Access connection is needed.
 
 ## Rules that always apply
 
@@ -86,10 +83,11 @@ Offer what is natural next: another resource, related disks or services, or a di
 
 ## When something fails
 
-- **A tool is missing**: name it and say it must be created in Agent Canvas; see the plugin README.
+- **An operation is unavailable**: load its owning skill and resolve the bundled script, including its agent-managed `read_skill_file` fallback. If the script, the Python runtime, the terminal, a dependency, or the Azure authentication is unavailable, report that specific prerequisite; never ask the customer to create a Python tool and never estimate billed costs silently.
+- **Authentication failed** (`auth_required: true`, or HTTP 401): get a new ARM token as in skill `azure-cost-details` and repeat the call once. It is not a missing role, and it is not a reason to switch source.
 - **Cost Details throttled** (a `retry` whose message says HTTP 429, or a wait above 15 minutes): follow "Rate limits" in skill `azure-cost-details`. Stop requesting reports for that subscription and do not wait in the thread. Make one attempt with `AzureCostDetails-Query` (see "Query path" in the [overview-workflow](./references/overview-workflow.md#query-path-second-source)) and say that it is the source. If the Query tool is also throttled or denied, give the exposure-only answer described in [overview-workflow](./references/overview-workflow.md#when-billed-cost-is-unavailable) and say how long to wait: billed cost is the one thing an estimate cannot replace. A deep dive can still give the rule and the resource facts, saying that cost and commitment coverage need billing data.
 - **Cost Details not supported for a subscription** (an error that says the offer is not supported, for example anything other than EA or MCA): use `AzureCostDetails-Query` and say so.
-- **Cost Details denied** (HTTP 401 or 403): report `http_status` and `azure_code`, and name the missing role (`Cost Management Reader`). Both cost sources need it, so do not try the other one.
+- **Cost Details denied** (HTTP 403): report `http_status` and `azure_code`, and name the missing role (`Cost Management Reader`). Both cost sources need it, so do not try the other one.
 - **No billed data from either source**: mark that subscription as having no billed data. For virtual machines and managed disks only, a retail list-price scenario is allowed, labelled "hypothetical, not billed" and never presented as a forecast.
 - **`split_required`**: request smaller non-overlapping periods, as in skill `azure-cost-details`.
 - **Too large for the chat** (see the sizing gates in the overview workflow): offer a narrower scope or the local script `CostIncrease_Assessment_v6.ps1`.

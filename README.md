@@ -8,7 +8,7 @@ A growing collection of practical, reusable utilities for assessing, operating, 
 
 | Utility | Purpose | Azure SRE Agent | Download |
 |---|---|---|---|
-| [Azure Cost Increase Assessment](./utilities/azure-cost-increase-assessment/) | Inventories affected Azure compute and storage resources and estimates the monthly and annual impact of the price changes effective 1 February 2027. Includes an Azure SRE Agent plugin that gives a short overview first, with billed cost and active reservations and savings plans, and a deep dive on the resource you choose. | [Complete setup guide](./utilities/azure-cost-increase-assessment/#azure-sre-agent-plugin): permissions, Python tools, plugin, custom instructions | [Download ZIP](./downloads/Azure-Cost-Increase-Assessment-v6.zip) |
+| [Azure Cost Increase Assessment](./utilities/azure-cost-increase-assessment/) | Inventories affected Azure compute and storage resources and estimates the monthly and annual impact of the price changes effective 1 February 2027. Includes an Azure SRE Agent plugin that gives a short overview first, with billed cost and active reservations and savings plans, and a deep dive on the resource you choose. | [Install from GitHub](./utilities/azure-cost-increase-assessment/#azure-sre-agent-plugin): skills and Python scripts bundled together; no manual tool creation | [Download ZIP](./downloads/Azure-Cost-Increase-Assessment-v6.zip) |
 
 ## Quick start
 
@@ -24,6 +24,8 @@ Connect-AzAccount -Tenant <tenant-id-or-domain>
 
 See the [utility documentation](./utilities/azure-cost-increase-assessment/README.md) for permissions, parameters, calculation details, Azure Resource Graph queries, caveats, and the animated demo.
 
+For **Azure SRE Agent**, use **Builder > Plugins > Install from URL** with repository `DevOpsStyle/AzureUtilities` and path `utilities/azure-cost-increase-assessment`. The four skills and the Python scripts they run are installed together, because the scripts live in the skill folders. There is no script to upload, no Agent Canvas Python tool to create, and no Code Access connection: at run time the agent finds the installed scripts and gets its own Azure token. The only manual prerequisite is granting the Azure roles; see the [plugin guide](./utilities/azure-cost-increase-assessment/README.md#azure-sre-agent-plugin).
+
 ## Repository structure
 
 ```text
@@ -38,31 +40,37 @@ AzureUtilities/
         |-- README.md
         |-- media/
         |   `-- regional-and-vm-price-increases-demo.gif
-        `-- skills/
-            |-- azure-commitments/
-            |   |-- SKILL.md
-            |   |-- references/
-            |   |   `-- AzureCommitments-Guida.md
-            |   `-- scripts/
-            |       `-- AzureCommitments-List.py
-            |-- azure-cost-advisor/
-            |   |-- SKILL.md
-            |   `-- references/
-            |       |-- deep-dive-playbooks.md
-            |       |-- overview-workflow.md
-            |       `-- price-change-profiles.md
-            |-- azure-cost-details/
-            |   |-- SKILL.md
-            |   |-- references/
-            |   |   `-- AzureCostDetails-Guida.md
-            |   `-- scripts/
-            |       |-- AzureCostDetails-Query.py
-            |       |-- AzureCostDetails-Read.py
-            |       `-- AzureCostDetails-Report.py
-            `-- azure-cost-increase-assessment/
-                |-- SKILL.md
-                `-- references/
+        |-- skills/                         <- one self-contained folder per skill
+        |   |-- azure-commitments/
+        |   |   |-- SKILL.md
+        |   |   |-- references/
+        |   |   |   `-- AzureCommitments-Guida.md
+        |   |   `-- scripts/                <- run by the skill in the agent sandbox
+        |   |       |-- AzureCommitments-List.py
+        |   |       `-- requirements.txt
+        |   |-- azure-cost-advisor/
+        |   |   |-- SKILL.md
+        |   |   `-- references/
+        |   |       |-- deep-dive-playbooks.md
+        |   |       |-- overview-workflow.md
+        |   |       `-- price-change-profiles.md
+        |   |-- azure-cost-details/
+        |   |   |-- SKILL.md
+        |   |   |-- references/
+        |   |   |   `-- AzureCostDetails-Guida.md
+        |   |   `-- scripts/                <- run by the skill in the agent sandbox
+        |   |       |-- AzureCostDetails-Query.py
+        |   |       |-- AzureCostDetails-Read.py
+        |   |       |-- AzureCostDetails-Report.py
+        |   |       `-- requirements.txt
+        |   `-- azure-cost-increase-assessment/
+        |       |-- SKILL.md
+        |       `-- references/
+        `-- tests/
+            `-- test_skill_packaging.py     <- offline checks of the plugin and the scripts
 ```
+
+A skill folder must be self-contained: Azure SRE Agent copies each skill folder of a plugin into the agent sandbox, so a link or a script path outside it does not resolve. Keep the scripts in the `scripts/` folder of the skill that runs them, and run the offline tests (see the plugin guide) before pushing: with automatic updates on, a push reaches the agents that installed the plugin.
 
 Future utilities should be added under `utilities/<utility-name>/` and include a self-contained `README.md`. Add each new utility to the catalog above so users can discover it from the repository home page.
 
