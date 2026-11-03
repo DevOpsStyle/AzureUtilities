@@ -23,7 +23,7 @@ The plugin installs these files together with this skill. "The tool" below is th
 
 ## Running the bundled script
 
-Work from the sandbox workspace root, where the terminal starts. Use `RunInTerminal` for commands and `CreateFile` for files. If those workspace tools are not available, stop and say that workspace tools must be turned on for the agent (Experimental Settings). Keep the private files of the thread in `tmp/azure-cost/`, which `azure-cost-details` shares.
+Work from the sandbox workspace root, where the terminal starts. Use `RunInTerminal` for commands and `CreateFile` for files. If those workspace tools are not available, stop and say that workspace tools must be turned on for the agent (**EnableWorkspaceTools** in **Capabilities > Experimental Settings**). Keep the private files of the thread in `tmp/azure-cost/`, which `azure-cost-details` shares.
 
 1. **Resolve the skill directory** (installed skill first):
 

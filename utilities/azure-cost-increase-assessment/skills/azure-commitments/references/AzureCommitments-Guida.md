@@ -13,7 +13,7 @@ L'agente segue la procedura "Running the bundled script" di [SKILL.md](../SKILL.
 3. Salva i parametri JSON in `tmp/azure-cost/` ed esegue, con `RunInTerminal`, `python3 "<SKILL_DIR>/scripts/AzureCommitments-List.py" --input tmp/azure-cost/commitments-1.json --output tmp/azure-cost/commitments-1.out.json` (con `--token-file tmp/azure-cost/arm-token` solo dopo il ripiego del punto 2).
 4. Analizza nel sandbox il file di output (il terminale mostra solo un riepilogo) e riusa il risultato nella conversazione. Con `auth_required: true` segue il punto 2; `forbidden` indica invece un ruolo mancante.
 
-I terminali e i file del sandbox sono *workspace tools*: devono essere attivi nell'agente (**Experimental Settings**). Il plugin non assegna ruoli: assegna all'identità gestita dell'agente i due ruoli del paragrafo successivo. Per aggiornare il codice aggiorna il plugin; non serve ricreare o collegare tool.
+I terminali e i file del sandbox sono *workspace tools*: devono essere attivi nell'agente (di default negli agenti creati dal 10 marzo 2026; per quelli precedenti attiva **EnableWorkspaceTools** in **Capabilities > Experimental Settings**). Il plugin non assegna ruoli: assegna all'identità gestita dell'agente i due ruoli del paragrafo successivo. Per aggiornare il codice aggiorna il plugin; non serve ricreare o collegare tool.
 
 Riepilogo del contratto, utile solo se si vuole ancora usare lo script come Python tool di Agent Canvas:
 
